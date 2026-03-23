@@ -620,9 +620,12 @@ RegisterNetEvent('cross-factions:captureBaslat', function(tId)
     -- Aktif savaş var mı?
     local savasVar = false
     for _, s in pairs(AktifSavaslar) do
-        if (s.saldiranId == fid or s.savunucuId == fid) and s.territoryId == tId then
-            savasVar = true
-            break
+        if (s.saldiranId == fid or s.savunucuId == fid) then
+            -- Bölge belirtilmemiş (genel savaş) ya da bu bölge için savaş açılmış
+            if not s.territoryId or s.territoryId == tId then
+                savasVar = true
+                break
+            end
         end
     end
     if not savasVar then

@@ -389,3 +389,82 @@ body {
 /* ── Online / Offline nokta ── */
 .dot-online  { color: #2ecc71; font-size: 10px; }
 .dot-offline { color: #555;    font-size: 10px; }
+
+/* ── Toast bildirimi ── */
+.cf-toast {
+  position: fixed;
+  top: 20px;
+  left: 50%;
+  transform: translateX(-50%) translateY(-60px);
+  background: #c0392b;
+  color: #fff;
+  padding: 10px 20px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  z-index: 10000;
+  transition: transform 0.3s ease, opacity 0.3s ease;
+  opacity: 0;
+  pointer-events: none;
+  max-width: 420px;
+  text-align: center;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+}
+.cf-toast.show {
+  transform: translateX(-50%) translateY(0);
+  opacity: 1;
+}
+.cf-toast.cf-toast-success { background: #1a6b3a; border: 1px solid #2ecc71; }
+.cf-toast.cf-toast-warning { background: #6b4000; border: 1px solid #e67e22; }
+.cf-toast.cf-toast-error   { background: #6b1010; border: 1px solid #e74c3c; }
+.cf-toast.cf-toast-info    { background: #0a3060; border: 1px solid #3498db; }
+
+/* ── Modal overlay ── */
+.cf-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.65);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+}
+
+.cf-modal {
+  background: linear-gradient(145deg, #0f1923, #1a2535);
+  border: 1px solid #2a3a4f;
+  border-radius: 12px;
+  padding: 26px 28px;
+  min-width: 300px;
+  max-width: 460px;
+  box-shadow: 0 0 50px rgba(0, 0, 0, 0.8), 0 0 10px rgba(52,152,219,0.15);
+  animation: tabletAc 0.2s ease;
+}
+
+.cf-modal-msg {
+  font-size: 14px;
+  color: #e0e0e0;
+  margin-bottom: 20px;
+  line-height: 1.6;
+  text-align: center;
+}
+
+.cf-modal-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+}
+
+.cf-prompt-input {
+  width: 100%;
+  background: #111c28;
+  border: 1px solid #2a3a4f;
+  border-radius: 6px;
+  color: #e0e0e0;
+  padding: 9px 12px;
+  font-size: 13px;
+  outline: none;
+  margin-bottom: 16px;
+  transition: border-color 0.2s;
+}
+.cf-prompt-input:focus { border-color: #3498db; }
