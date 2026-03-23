@@ -485,7 +485,8 @@ function renderSavaslar() {
     if (ilanFormuEl) ilanFormuEl.classList.add('hidden');
     if (ilanUyariEl) {
       ilanUyariEl.classList.remove('hidden');
-      ilanUyariEl.innerHTML = '<p style="color:#7a8fa6;font-size:12px;margin-top:8px">⚠ Savaş ilan edebilmek için bir faction\'a üye olmanız gerekmektedir.</p>';
+      ilanUyariEl.textContent = '⚠ Savaş ilan edebilmek için bir faction\'a üye olmanız gerekmektedir.';
+      ilanUyariEl.style.cssText = 'color:#7a8fa6;font-size:12px;margin-top:8px';
     }
     return;
   }
@@ -526,13 +527,12 @@ function renderSavaslar() {
   if (ilanBtn && !ilanBtn._bound) {
     ilanBtn._bound = true;
     ilanBtn.addEventListener('click', () => {
-      const currentFactionlar = veri.factionlar || {};
       const hedef = document.getElementById('savasHedefFaction').value;
       const ter   = document.getElementById('savasTerritory').value || null;
       if (!benimFactionId) { showAlert('Bir faction üyesi değilsiniz!'); return; }
       if (!hedef) { showAlert('Hedef faction seçiniz!', 'warning'); return; }
       showConfirm(
-        (currentFactionlar[hedef]?.isim || 'Hedef') + ' factionına savaş ilan etmek istediğinize emin misiniz?',
+        (factionlar[hedef]?.isim || 'Hedef') + ' factionına savaş ilan etmek istediğinize emin misiniz?',
         () => nuiPost('savasIlanEt', { hedefFactionId: parseInt(hedef), territoryId: ter ? parseInt(ter) : null })
       );
     });
