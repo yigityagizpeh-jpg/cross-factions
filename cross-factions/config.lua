@@ -158,6 +158,15 @@ Config.Gorevler = {
     },
 }
 
+-- ── Faction Yönetim Yeri ────────────────────────────────────
+-- Oyuncular bu koordinatta Faction tabletini açabilir.
+Config.YonetimYeri = {
+    x      = 315.8,
+    y      = -191.2,
+    z      = 54.3,
+    radius = 3.0,   -- Etkileşim yarıçapı (metre)
+}
+
 -- ── Blip renk kodları (GTA blip colour index) ────────────────
 Config.BlipRenkleri = {
     ['#e74c3c'] = 1,  ['#e67e22'] = 17, ['#f1c40f'] = 5,
