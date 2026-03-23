@@ -1,2 +1,0 @@
--- Bu dosya artık server/main.lua içinde yönetilmektedir.
--- cross-factions sunucu kodları için server/main.lua'ya bakın.

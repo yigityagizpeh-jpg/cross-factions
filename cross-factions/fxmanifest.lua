@@ -2,30 +2,42 @@ fx_version 'cerulean'
 game 'gta5'
 
 name        'cross-factions'
-description 'QBCore Faction / Territory / War Sistemi'
+description 'QBCore Gang & Turf War sistemi — GunRP için production-ready'
 author      'cross-factions'
 version     '1.0.0'
 
+-- Shared scripts (her iki tarafta da yüklenir)
 shared_scripts {
-    '@qb-core/shared/locale.lua',
+    '@ox_lib/init.lua',
     'config.lua',
+    'locales/*.lua',
 }
 
-server_scripts {
-    '@oxmysql/lib/MySQL.lua',
-    'server/main.lua',
-}
-
+-- Client-side scripts
 client_scripts {
     'client/main.lua',
+    'client/turf.lua',
+    'client/spray.lua',
+    'client/menu.lua',
 }
 
-ui_page 'html/index.html'
-
-files {
-    'html/index.html',
-    'html/css/style.css',
-    'html/js/app.js',
+-- Server-side scripts
+server_scripts {
+    '@oxmysql/lib/MySQL.lua',
+    'server/logs.lua',
+    'server/main.lua',
+    'server/gang.lua',
+    'server/turf.lua',
+    'server/war.lua',
+    'server/spray.lua',
 }
 
+-- Dışa aktarılan fonksiyonlar (diğer scriptlerin kullanımı için)
+exports {
+    'GetPlayerGang',
+    'IsPlayerInGang',
+    'GetGangData',
+}
+
+-- Dosya izinleri
 lua54 'yes'
