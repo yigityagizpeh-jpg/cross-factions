@@ -5,9 +5,11 @@
 'use strict';
 
 // ── Durum ───────────────────────────────────────────────────
-let veri          = {};
+let veri           = {};
 let benimFactionId = null;
-let aktifTab      = 'factionlar';
+let benimCitizenId = null;
+let aktifTab       = 'factionlar';
+let onlineOyuncular = {};  // { citizenId: true } – sunucudan gelen online listesi
 
 const YETKI_ISIMLERI = {
   1: 'Üye', 2: 'Askeri', 3: 'Subay', 4: 'Komutan', 5: 'Lider'
@@ -31,14 +33,17 @@ window.addEventListener('message', (ev) => {
       if (data.durum === 'kapat') tabletKapat();
       break;
     case 'tabletVeri':
-      veri           = data.veri;
-      benimFactionId = data.veri.benimFactionId;
+      veri            = data.veri;
+      benimFactionId  = data.veri.benimFactionId;
+      benimCitizenId  = data.veri.benimCitizenId || null;
+      onlineOyuncular = data.veri.onlineOyuncular || {};
       render();
       break;
     case 'syncVeri':
-      veri.factionlar    = data.veri.factionlar   || veri.factionlar;
-      veri.territoriler  = data.veri.territoriler  || veri.territoriler;
-      veri.aktifSavaslar = data.veri.aktifSavaslar || veri.aktifSavaslar;
+      veri.factionlar     = data.veri.factionlar    || veri.factionlar;
+      veri.territoriler   = data.veri.territoriler  || veri.territoriler;
+      veri.aktifSavaslar  = data.veri.aktifSavaslar || veri.aktifSavaslar;
+      onlineOyuncular     = data.veri.onlineOyuncular || onlineOyuncular;
       render();
       break;
     case 'savasGuncelle':
@@ -166,10 +171,11 @@ function renkSeciciOlustur(containerId, hiddenId, secilenRenk) {
   if (secilenRenk) document.getElementById(hiddenId).value = secilenRenk;
 }
 
-// ── Online oyuncular (sunucudan gelen uyeler listesinde online işareti) ──
+// ── Online / Offline yardımcısı ──────────────────────────────
 function onlineIsa(citizenId) {
-  // Sunucu online bilgisi göndermediğinde ? göster
-  return '●';
+  return onlineOyuncular && onlineOyuncular[citizenId]
+    ? '<span class="dot-online" title="Çevrimiçi">●</span>'
+    : '<span class="dot-offline" title="Çevrimdışı">●</span>';
 }
 
 // ───────────────────────────────────────────────────────────
@@ -190,9 +196,10 @@ function renderFactionlar() {
     const logoHtml = f.logo_url
       ? `<img src="${escHtml(f.logo_url)}" class="faction-logo" onerror="this.style.display='none'" style="width:40px;height:40px;border-radius:6px;margin-bottom:6px;" />`
       : '';
-    const uyelerHtml = (f.uyeler || []).slice(0,5).map(u =>
-      `<span style="font-size:10px;color:#8899aa">${escHtml(u.isim)}</span>`
-    ).join(', ') + (uyeSayisi > 5 ? `<span style="font-size:10px;color:#555"> +${uyeSayisi - 5} daha</span>` : '');
+    const uyelerHtml = (f.uyeler || []).slice(0, 8).map(u =>
+      `<span style="font-size:10px;color:#8899aa">${onlineIsa(u.citizen_id)} ${escHtml(u.isim)}</span>`
+    ).join(' &nbsp; ') + (uyeSayisi > 8 ? `<span style="font-size:10px;color:#555"> +${uyeSayisi - 8} daha</span>` : '');
+    const onlineSayisi = (f.uyeler || []).filter(u => onlineOyuncular && onlineOyuncular[u.citizen_id]).length;
     return `
       <div class="card">
         ${logoHtml}
@@ -202,10 +209,10 @@ function renderFactionlar() {
         </div>
         <div class="card-info">
           <div>👑 Lider: <b>${escHtml(getLiderIsim(f))}</b></div>
-          <div>👥 Üye: ${uyeSayisi}</div>
+          <div>👥 Üye: ${uyeSayisi} &nbsp;<span style="color:#2ecc71;font-size:10px">(${onlineSayisi} çevrimiçi)</span></div>
           <div>🏆 Kazanma: ${f.wins || 0}</div>
           <div>⚔ Sezon: ${f.sezon_wins || 0}</div>
-          ${uyeSayisi > 0 ? `<div style="margin-top:4px">${uyelerHtml}</div>` : ''}
+          ${uyeSayisi > 0 ? `<div style="margin-top:6px;line-height:1.9">${uyelerHtml}</div>` : ''}
         </div>
       </div>`;
   }).join('');
@@ -270,9 +277,10 @@ function renderBenimFaction() {
 
 function getBenimYetki(f) {
   if (!f || !f.uyeler) return 0;
-  const benimCitizenId = veri.benimCitizenId;
+  const cid = benimCitizenId || (veri && veri.benimCitizenId);
+  if (!cid) return 0;
   for (const u of f.uyeler) {
-    if (u.citizen_id === benimCitizenId) return u.yetki;
+    if (u.citizen_id === cid) return u.yetki;
   }
   return 1;
 }
@@ -282,7 +290,7 @@ function renderUyeTablosu(f, benimYetki) {
   if (!tbody) return;
   const uyeler = f.uyeler || [];
   if (uyeler.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:#555">Üye yok</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:#555">Üye yok</td></tr>';
     return;
   }
   tbody.innerHTML = uyeler.map(u => {
@@ -295,7 +303,7 @@ function renderUyeTablosu(f, benimYetki) {
       ` : ''}
     ` : '<span style="color:#555;font-size:10px">-</span>';
     return `<tr>
-      <td>${escHtml(u.isim)}</td>
+      <td>${onlineIsa(u.citizen_id)} ${escHtml(u.isim)}</td>
       <td><span class="badge badge-info">${escHtml(yetkiIsim)}</span></td>
       <td>$${(u.maas || 0).toLocaleString()}</td>
       <td>${islemler}</td>

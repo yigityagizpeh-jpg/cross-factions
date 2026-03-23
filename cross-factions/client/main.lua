@@ -12,6 +12,7 @@ local OyuncuBlipleri    = {}
 local CaptureBarlar     = {}   -- [tId] = { thread, aktif }
 local AFKKontrol        = { son_pos = nil, son_zaman = 0, afk = false }
 local BenimFactionId    = nil
+local BenimCitizenId    = nil
 
 -- ── Yardımcı ─────────────────────────────────────────────────
 local function RenkHextenRGBA(hex)
@@ -74,6 +75,7 @@ end)
 RegisterNetEvent('cross-factions:tabletVeri', function(veri)
     SyncVeri = veri
     BenimFactionId = veri.benimFactionId
+    BenimCitizenId = veri.benimCitizenId
     SendNUIMessage({ type = 'tabletVeri', veri = veri })
 end)
 
@@ -310,6 +312,70 @@ CreateThread(function()
             TabletAcik = false
             SetNuiFocus(false, false)
             SendNUIMessage({ type = 'tablet', durum = 'kapat' })
+        end
+    end
+end)
+
+-- ── Faction Yönetim Yeri – blip ──────────────────────────────
+local function YonetimBlipOlustur()
+    local blip = AddBlipForCoord(Config.YonetimYeri.x, Config.YonetimYeri.y, Config.YonetimYeri.z)
+    SetBlipSprite(blip, 478)          -- tablet/management icon
+    SetBlipScale(blip, 0.9)
+    SetBlipColour(blip, 3)            -- mavi
+    SetBlipAsShortRange(blip, true)
+    BeginTextCommandSetBlipName('STRING')
+    AddTextComponentString('Faction Yönetim Merkezi')
+    EndTextCommandSetBlipName(blip)
+end
+
+CreateThread(function()
+    YonetimBlipOlustur()
+
+    local merkezVec = vector3(Config.YonetimYeri.x, Config.YonetimYeri.y, Config.YonetimYeri.z)
+    local r         = Config.YonetimYeri.radius
+
+    while true do
+        local ped    = PlayerPedId()
+        local coords = GetEntityCoords(ped)
+        local dist   = #(coords - merkezVec)
+
+        if dist <= r + 20.0 then
+            -- Yön işareti
+            DrawMarker(
+                1,                                      -- silindir
+                merkezVec.x, merkezVec.y, merkezVec.z - 0.95,
+                0.0, 0.0, 0.0,
+                0.0, 0.0, 0.0,
+                r * 0.6, r * 0.6, 0.5,
+                52, 152, 219, 80,                       -- mavi, yarı şeffaf
+                false, true, 2, false, nil, nil, false
+            )
+
+            if dist <= r then
+                -- Ekranda ipucu metni
+                SetTextFont(4)
+                SetTextProportional(1)
+                SetTextScale(0.0, 0.4)
+                SetTextColour(52, 152, 219, 255)
+                SetTextOutline()
+                BeginTextCommandDisplayText('STRING')
+                AddTextComponentSubstringPlayerName('~INPUT_CONTEXT~ Faction Tabletini Aç')
+                EndTextCommandDisplayText(0.5, 0.91)
+
+                -- E tuşu (38) ile tablet aç
+                if IsControlJustReleased(0, 38) then
+                    if not TabletAcik then
+                        TabletAcik = true
+                        SetNuiFocus(true, true)
+                        SendNUIMessage({ type = 'tablet', durum = 'ac' })
+                        TriggerServerEvent('cross-factions:tabletAc')
+                    end
+                end
+            end
+
+            Wait(0)
+        else
+            Wait(1000)
         end
     end
 end)

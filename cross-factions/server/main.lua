@@ -36,11 +36,24 @@ local function OyuncuFactioniBul(citizenId)
     return nil, nil, nil
 end
 
+local function OnlineOyunculariGetir()
+    local liste = {}
+    local tumOyuncular = QBCore.Functions.GetQBPlayers()
+    for _, p in pairs(tumOyuncular) do
+        local cid = p.PlayerData.citizenid
+        if cid then
+            liste[cid] = true
+        end
+    end
+    return liste
+end
+
 local function HerkeseSyncGonder()
     local veri = {
-        factionlar     = Factionlar,
-        territoriler   = TerritoryDurum,
-        aktifSavaslar  = AktifSavaslar,
+        factionlar      = Factionlar,
+        territoriler    = TerritoryDurum,
+        aktifSavaslar   = AktifSavaslar,
+        onlineOyuncular = OnlineOyunculariGetir(),
     }
     TriggerClientEvent('cross-factions:sync', -1, veri)
 end
@@ -1010,13 +1023,15 @@ RegisterNetEvent('cross-factions:tabletAc', function()
     local sezonlar = MySQL.query.await('SELECT * FROM cf_sezonlar ORDER BY id DESC LIMIT 5')
 
     TriggerClientEvent('cross-factions:tabletVeri', source, {
-        factionlar    = Factionlar,
-        territoriler  = TerritoryDurum,
-        savaslar      = aktifSavasListesi,
-        benimFactionId = fid,
-        aktifGorev    = aktifGorev,
-        sezonlar      = sezonlar,
-        gorevler      = Config.Gorevler,
+        factionlar      = Factionlar,
+        territoriler    = TerritoryDurum,
+        savaslar        = aktifSavasListesi,
+        benimFactionId  = fid,
+        benimCitizenId  = citizenId,
+        aktifGorev      = aktifGorev,
+        sezonlar        = sezonlar,
+        gorevler        = Config.Gorevler,
+        onlineOyuncular = OnlineOyunculariGetir(),
     })
 end)
 
