@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Faction Tablet</title>
+<link rel="stylesheet" href="css/style.css"/>
+</head>
+<body>
+<div id="tablet" class="tablet hidden">
+
+  <!-- Üst bar -->
+  <div class="tablet-header">
+    <div class="logo">⚔ CROSS FACTIONS</div>
+    <nav class="nav-tabs">
+      <button class="nav-btn active" data-tab="factionlar">Factionlar</button>
+      <button class="nav-btn" data-tab="benimFaction">Benim Faction</button>
+      <button class="nav-btn" data-tab="territoriler">Bölgeler</button>
+      <button class="nav-btn" data-tab="savaslar">Savaşlar</button>
+      <button class="nav-btn" data-tab="sezon">Sezon</button>
+      <button class="nav-btn" data-tab="gorevler">Görevler</button>
+    </nav>
+    <button class="close-btn" id="closeBtn">✕</button>
+  </div>
+
+  <!-- İçerik panelleri -->
+  <div class="content">
+
+    <!-- ── FACTIONLAR ── -->
+    <div id="tab-factionlar" class="tab-panel active">
+      <h2>Tüm Factionlar</h2>
+      <div id="factionListesi" class="card-grid"></div>
+    </div>
+
+    <!-- ── BENİM FACTION ── -->
+    <div id="tab-benimFaction" class="tab-panel hidden">
+      <div id="yeniFactionForm" class="hidden">
+        <h2>Faction Oluştur</h2>
+        <div class="form-group">
+          <label>Faction İsmi</label>
+          <input type="text" id="yeniFactionIsim" placeholder="Faction ismi..." maxlength="24"/>
+        </div>
+        <div class="form-group">
+          <label>Renk Seç</label>
+          <div id="renkSecici" class="renk-grid"></div>
+          <input type="hidden" id="seciliRenk"/>
+        </div>
+        <div class="form-group">
+          <label>Logo URL (isteğe bağlı)</label>
+          <input type="text" id="yeniFactionLogo" placeholder="https://..."/>
+        </div>
+        <button class="btn-primary" id="factionOlusturBtn">Oluştur</button>
+      </div>
+
+      <div id="factionPaneli" class="hidden">
+        <div class="faction-header" id="factionHeaderPanel"></div>
+        <div class="faction-actions">
+          <button class="btn-primary" id="factionGuncelleBtn">Logo / Renk Güncelle</button>
+          <button class="btn-danger" id="factionAyrilBtn">Ayrıl</button>
+          <button class="btn-danger" id="factionSilBtn" style="display:none">Faction Sil</button>
+        </div>
+
+        <!-- Güncelleme formu -->
+        <div id="guncelleForm" class="hidden">
+          <div class="form-group">
+            <label>Yeni Logo URL</label>
+            <input type="text" id="guncelLogo" placeholder="https://..."/>
+          </div>
+          <div class="form-group">
+            <label>Yeni Renk</label>
+            <div id="guncelRenkSecici" class="renk-grid"></div>
+            <input type="hidden" id="guncelSeciliRenk"/>
+          </div>
+          <button class="btn-primary" id="guncelleKaydetBtn">Kaydet</button>
+          <button class="btn-secondary" id="guncelleIptalBtn">İptal</button>
+        </div>
+
+        <h3>Üyeler</h3>
+        <div id="uyeListesi" class="uye-table-wrap">
+          <table class="uye-table">
+            <thead><tr>
+              <th>İsim</th><th>Yetki</th><th>Maaş</th><th>İşlem</th>
+            </tr></thead>
+            <tbody id="uyeTableBody"></tbody>
+          </table>
+        </div>
+
+        <div class="invite-bar">
+          <input type="text" id="davetCitizenId" placeholder="Citizen ID ile davet..."/>
+          <button class="btn-primary" id="davetEtBtn">Davet Et</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── TERRİTORİLER ── -->
+    <div id="tab-territoriler" class="tab-panel hidden">
+      <h2>Bölge Haritası</h2>
+      <div id="territoryListesi" class="card-grid"></div>
+    </div>
+
+    <!-- ── SAVAŞLAR ── -->
+    <div id="tab-savaslar" class="tab-panel hidden">
+      <h2>Aktif Savaşlar</h2>
+      <div id="savasListesi" class="card-grid"></div>
+      <hr/>
+      <h2>Savaş İlan Et</h2>
+      <div class="form-group">
+        <label>Hedef Faction</label>
+        <select id="savasHedefFaction"><option value="">Seç...</option></select>
+      </div>
+      <div class="form-group">
+        <label>Savaş Bölgesi (Territory)</label>
+        <select id="savasTerritory"><option value="">Seç...</option></select>
+      </div>
+      <button class="btn-danger" id="savasIlanBtn">Savaş İlan Et</button>
+    </div>
+
+    <!-- ── SEZON ── -->
+    <div id="tab-sezon" class="tab-panel hidden">
+      <h2>Sezon Sıralaması</h2>
+      <div id="sezonListesi" class="card-grid"></div>
+    </div>
+
+    <!-- ── GÖREVLER ── -->
+    <div id="tab-gorevler" class="tab-panel hidden">
+      <h2>Görevler / Contracts</h2>
+      <div id="aktifGorev" class="hidden info-box"></div>
+      <div id="gorevListesi" class="card-grid"></div>
+    </div>
+
+  </div><!-- /content -->
+</div><!-- /tablet -->
+
+<script src="js/app.js"></script>
+</body>
+</html>

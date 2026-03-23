@@ -1,0 +1,391 @@
+/* ============================================================
+   cross-factions  |  Tablet Arayüzü Stilleri
+   ============================================================ */
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  background: transparent;
+  color: #e0e0e0;
+  overflow: hidden;
+  user-select: none;
+}
+
+/* ── Tablet kapsayıcı ── */
+.tablet {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 900px;
+  max-height: 620px;
+  background: linear-gradient(145deg, #0f1923 0%, #1a2535 100%);
+  border: 1px solid #2a3a4f;
+  border-radius: 14px;
+  box-shadow: 0 0 60px rgba(0,0,0,0.8), 0 0 12px rgba(52,152,219,0.25);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  animation: tabletAc 0.25s ease;
+}
+
+@keyframes tabletAc {
+  from { opacity: 0; transform: translate(-50%, -48%) scale(0.96); }
+  to   { opacity: 1; transform: translate(-50%, -50%) scale(1);    }
+}
+
+.hidden { display: none !important; }
+
+/* ── Üst bar ── */
+.tablet-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: linear-gradient(90deg, #0d1520, #1a2a3a);
+  padding: 12px 16px;
+  border-bottom: 1px solid #2a3a4f;
+  flex-shrink: 0;
+}
+
+.logo {
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  color: #3498db;
+  text-shadow: 0 0 8px rgba(52,152,219,0.6);
+  white-space: nowrap;
+}
+
+.nav-tabs {
+  display: flex;
+  gap: 4px;
+  flex: 1;
+  flex-wrap: wrap;
+}
+
+.nav-btn {
+  background: transparent;
+  border: 1px solid #2a3a4f;
+  color: #8899aa;
+  padding: 6px 14px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+  transition: all 0.2s;
+}
+.nav-btn:hover  { background: #1e2f40; color: #ccc; }
+.nav-btn.active { background: #3498db; border-color: #3498db; color: #fff; }
+
+.close-btn {
+  background: transparent;
+  border: 1px solid #c0392b;
+  color: #c0392b;
+  padding: 6px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+  transition: all 0.2s;
+  flex-shrink: 0;
+}
+.close-btn:hover { background: #c0392b; color: #fff; }
+
+/* ── İçerik ── */
+.content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px;
+  scrollbar-width: thin;
+  scrollbar-color: #2a3a4f transparent;
+}
+.content::-webkit-scrollbar { width: 6px; }
+.content::-webkit-scrollbar-track { background: transparent; }
+.content::-webkit-scrollbar-thumb { background: #2a3a4f; border-radius: 3px; }
+
+.tab-panel h2 {
+  font-size: 16px;
+  color: #3498db;
+  margin-bottom: 14px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  border-bottom: 1px solid #2a3a4f;
+  padding-bottom: 6px;
+}
+
+.tab-panel h3 {
+  font-size: 13px;
+  color: #8899aa;
+  margin: 14px 0 8px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+/* ── Kart grid ── */
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+  gap: 12px;
+}
+
+.card {
+  background: #151f2b;
+  border: 1px solid #243040;
+  border-radius: 10px;
+  padding: 14px;
+  transition: border-color 0.2s;
+}
+.card:hover { border-color: #3498db; }
+
+.card-title {
+  font-size: 14px;
+  font-weight: 700;
+  margin-bottom: 6px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.color-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  display: inline-block;
+  flex-shrink: 0;
+}
+
+.card-info {
+  font-size: 11px;
+  color: #7a8fa6;
+  line-height: 1.7;
+}
+
+.card .card-actions {
+  margin-top: 10px;
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+/* ── Butonlar ── */
+.btn-primary, .btn-secondary, .btn-danger, .btn-warning {
+  border: none;
+  padding: 7px 14px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  transition: opacity 0.2s, transform 0.1s;
+}
+.btn-primary:hover,
+.btn-secondary:hover,
+.btn-danger:hover,
+.btn-warning:hover  { opacity: 0.85; transform: translateY(-1px); }
+
+.btn-primary   { background: #3498db; color: #fff; }
+.btn-secondary { background: #4a5568; color: #fff; }
+.btn-danger    { background: #c0392b; color: #fff; }
+.btn-warning   { background: #e67e22; color: #fff; }
+
+/* ── Form ── */
+.form-group {
+  margin-bottom: 14px;
+}
+.form-group label {
+  display: block;
+  font-size: 11px;
+  color: #8899aa;
+  margin-bottom: 4px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+.form-group input[type="text"],
+.form-group select {
+  width: 100%;
+  background: #111c28;
+  border: 1px solid #2a3a4f;
+  border-radius: 6px;
+  color: #e0e0e0;
+  padding: 8px 12px;
+  font-size: 13px;
+  outline: none;
+  transition: border-color 0.2s;
+}
+.form-group input[type="text"]:focus,
+.form-group select:focus { border-color: #3498db; }
+
+/* ── Renk seçici ── */
+.renk-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 6px;
+}
+.renk-secici-item {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  cursor: pointer;
+  border: 2px solid transparent;
+  transition: border-color 0.2s, transform 0.15s;
+}
+.renk-secici-item:hover  { transform: scale(1.15); }
+.renk-secici-item.secili { border-color: #fff; transform: scale(1.2); }
+
+/* ── Faction başlık ── */
+.faction-header {
+  background: #111c28;
+  border: 1px solid #2a3a4f;
+  border-radius: 10px;
+  padding: 16px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 14px;
+}
+.faction-logo {
+  width: 60px;
+  height: 60px;
+  object-fit: cover;
+  border-radius: 8px;
+  border: 2px solid #2a3a4f;
+}
+.faction-logo-placeholder {
+  width: 60px;
+  height: 60px;
+  border-radius: 8px;
+  background: #1e2f40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 28px;
+  border: 2px solid #2a3a4f;
+}
+.faction-info-block { flex: 1; }
+.faction-info-block .faction-name {
+  font-size: 18px;
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+.faction-info-block .faction-meta {
+  font-size: 11px;
+  color: #7a8fa6;
+  line-height: 1.8;
+}
+
+.faction-actions {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+/* ── Üye tablosu ── */
+.uye-table-wrap {
+  overflow-x: auto;
+  border-radius: 8px;
+  border: 1px solid #2a3a4f;
+  margin-bottom: 12px;
+}
+.uye-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.uye-table th {
+  background: #111c28;
+  color: #8899aa;
+  padding: 8px 12px;
+  text-align: left;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+.uye-table td {
+  padding: 8px 12px;
+  border-top: 1px solid #1a2535;
+  color: #c0cdd8;
+}
+.uye-table tr:hover td { background: #1a2535; }
+.uye-table .akcion-btn { font-size: 11px; padding: 4px 8px; margin-right: 4px; }
+
+/* ── Davet bar ── */
+.invite-bar {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+.invite-bar input {
+  flex: 1;
+  background: #111c28;
+  border: 1px solid #2a3a4f;
+  border-radius: 6px;
+  color: #e0e0e0;
+  padding: 8px 12px;
+  font-size: 13px;
+  outline: none;
+}
+.invite-bar input:focus { border-color: #3498db; }
+
+/* ── Progress bar (territory) ── */
+.progress-wrap {
+  background: #1a2535;
+  border-radius: 4px;
+  height: 8px;
+  overflow: hidden;
+  margin: 6px 0;
+}
+.progress-fill {
+  height: 100%;
+  border-radius: 4px;
+  background: linear-gradient(90deg, #3498db, #2ecc71);
+  transition: width 0.5s ease;
+}
+
+/* ── Info box ── */
+.info-box {
+  background: #111c28;
+  border: 1px solid #3498db;
+  border-radius: 10px;
+  padding: 14px;
+  margin-bottom: 14px;
+  font-size: 12px;
+  line-height: 1.8;
+}
+
+/* ── Badge ── */
+.badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+.badge-success { background: #1a4731; color: #2ecc71; }
+.badge-warning { background: #4a3000; color: #f39c12; }
+.badge-danger  { background: #3a1010; color: #e74c3c; }
+.badge-info    { background: #0a2a40; color: #3498db; }
+
+/* ── Sezon leaderboard ── */
+.lb-row {
+  display: flex;
+  align-items: center;
+  padding: 10px 14px;
+  border-bottom: 1px solid #1a2535;
+  gap: 12px;
+}
+.lb-rank {
+  font-size: 18px;
+  font-weight: 900;
+  color: #3498db;
+  width: 30px;
+  text-align: center;
+}
+.lb-rank.gold   { color: #f1c40f; }
+.lb-rank.silver { color: #bdc3c7; }
+.lb-rank.bronze { color: #e67e22; }
+.lb-isim { flex: 1; font-weight: 600; }
+.lb-win  { font-size: 11px; color: #7a8fa6; }
+
+/* ── Online / Offline nokta ── */
+.dot-online  { color: #2ecc71; font-size: 10px; }
+.dot-offline { color: #555;    font-size: 10px; }
