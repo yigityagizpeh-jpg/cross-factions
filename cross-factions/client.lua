@@ -1,0 +1,2 @@
+-- Bu dosya artık client/main.lua içinde yönetilmektedir.
+-- cross-factions istemci kodları için client/main.lua'ya bakın.
