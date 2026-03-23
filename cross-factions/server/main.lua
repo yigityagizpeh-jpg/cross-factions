@@ -1,1141 +1,382 @@
--- ============================================================
---  cross-factions  |  Sunucu Tarafı (server/main.lua)
--- ============================================================
+--[[
+    server/main.lua — Sunucu Çekirdeği
+    QBCore başlatma, cache yönetimi, shared utilities, export'lar,
+    kill-tracking event'i ve admin komutları bu dosyada toplanmıştır.
+--]]
 
 local QBCore = exports['qb-core']:GetCoreObject()
 
--- ── Bellekte tutulan durum ───────────────────────────────────
-local Factionlar       = {}   -- [faction_id] = { ... }
-local TerritoryDurum   = {}   -- [territory_id] = { captureProgress, owner, ... }
-local AktifSavaslar    = {}   -- [savas_id] = { ... }
-local AktifGorevler    = {}   -- [faction_id] = { ... }
-local CaptureIslemleri = {}   -- [territory_id] = { faction_id, oyuncular, timer, ... }
-local SonSavasIlan     = {}   -- [faction_id] = timestamp
+-- ─── Önbellek (Runtime Cache) ─────────────────────────────────────────────────
+-- Sunucu yeniden başlatılana kadar memlerde tutulan veriler
+GangCache    = {}   -- gangId → gang verisi
+MemberCache  = {}   -- citizenid → { gangId, rank, rankIndex }
+TurfCache    = {}   -- turfId → { owner, cooldownUntil }
+WarCache     = {}   -- warId → war verisi
+AllyCache    = {}   -- "gangA:gangB" → true
+SprayCache   = {}   -- sprayId → spray verisi
+KillCooldown = {}   -- "killerCid:victimCid" → timestamp (anti-farm)
 
--- ── Yardımcı fonksiyonlar ────────────────────────────────────
-local function Log(mesaj)
+-- ─── Yardımcı: Oyuncu QBCore objesi al ───────────────────────────────────────
+function GetPlayer(source)
+    return QBCore.Functions.GetPlayer(source)
+end
+
+-- ─── Yardımcı: Oyuncunun citizenid'ini al ────────────────────────────────────
+function GetCitizenId(source)
+    local player = GetPlayer(source)
+    if not player then return nil end
+    return player.PlayerData.citizenid
+end
+
+-- ─── Yardımcı: Admin kontrolü ────────────────────────────────────────────────
+function IsAdmin(source)
+    local player = GetPlayer(source)
+    if not player then return false end
+    local group = QBCore.Functions.GetPermission(source)
+    for _, g in ipairs(Config.AdminGroups) do
+        if group == g then return true end
+    end
+    return false
+end
+
+-- ─── Yardımcı: Debug log ─────────────────────────────────────────────────────
+function DebugPrint(msg)
     if Config.Debug then
-        print('^3[cross-factions]^0 ' .. tostring(mesaj))
+        print('[cross-factions DEBUG] ' .. tostring(msg))
     end
 end
 
-local function FactionGetir(factionId)
-    return Factionlar[factionId]
-end
-
-local function OyuncuFactioniBul(citizenId)
-    for fid, f in pairs(Factionlar) do
-        if f.uyeler then
-            for _, uye in ipairs(f.uyeler) do
-                if uye.citizen_id == citizenId then
-                    return fid, f, uye
-                end
+-- ─── Yardımcı: Aktif polis sayısını al ───────────────────────────────────────
+function GetActivePoliceCount()
+    local count = 0
+    local players = QBCore.Functions.GetQBPlayers()
+    for _, player in pairs(players) do
+        if player and player.PlayerData and player.PlayerData.job then
+            local job = player.PlayerData.job.name
+            if job == 'police' or job == 'sheriff' or job == 'bcso' then
+                count = count + 1
             end
         end
     end
-    return nil, nil, nil
+    return count
 end
 
-local function OnlineOyunculariGetir()
-    local liste = {}
-    local tumOyuncular = QBCore.Functions.GetQBPlayers()
-    for _, p in pairs(tumOyuncular) do
-        local cid = p.PlayerData.citizenid
-        if cid then
-            liste[cid] = true
+-- ─── Yardımcı: Gang üyelerini online say ─────────────────────────────────────
+function CountOnlineGangMembers(gangId)
+    local count = 0
+    local players = QBCore.Functions.GetQBPlayers()
+    for _, player in pairs(players) do
+        if player and player.PlayerData then
+            local cid = player.PlayerData.citizenid
+            if MemberCache[cid] and MemberCache[cid].gangId == gangId then
+                count = count + 1
+            end
         end
     end
-    return liste
+    return count
 end
 
-local function HerkeseSyncGonder()
-    local veri = {
-        factionlar      = Factionlar,
-        territoriler    = TerritoryDurum,
-        aktifSavaslar   = AktifSavaslar,
-        aktifGorevler   = AktifGorevler,
-        onlineOyuncular = OnlineOyunculariGetir(),
-    }
-    TriggerClientEvent('cross-factions:sync', -1, veri)
-end
-
-local function TabletVeriGonder(source)
-    local citizenId = CitizenIdGetir(source)
-    if not citizenId then return end
-    local fid, f = OyuncuFactioniBul(citizenId)
-    local aktifGorev = fid and AktifGorevler[fid] or nil
-    local aktifSavasListesi = {}
-    for _, s in pairs(AktifSavaslar) do
-        aktifSavasListesi[#aktifSavasListesi + 1] = s
-    end
-    local sezonlar = MySQL.query.await('SELECT * FROM cf_sezonlar ORDER BY id DESC LIMIT 5')
-    TriggerClientEvent('cross-factions:tabletVeri', source, {
-        factionlar      = Factionlar,
-        territoriler    = TerritoryDurum,
-        savaslar        = aktifSavasListesi,
-        benimFactionId  = fid,
-        benimCitizenId  = citizenId,
-        aktifGorev      = aktifGorev,
-        sezonlar        = sezonlar,
-        gorevler        = Config.Gorevler,
-        onlineOyuncular = OnlineOyunculariGetir(),
-    })
-end
-
-local function KaynakIsimGetir(source)
-    local oyuncu = QBCore.Functions.GetPlayer(source)
-    if oyuncu then
-        return oyuncu.PlayerData.charinfo.firstname .. ' ' .. oyuncu.PlayerData.charinfo.lastname
-    end
-    return 'Bilinmiyor'
-end
-
-local function CitizenIdGetir(source)
-    local oyuncu = QBCore.Functions.GetPlayer(source)
-    if oyuncu then return oyuncu.PlayerData.citizenid end
-    return nil
-end
-
--- ── Veritabanından yükleme ───────────────────────────────────
-local function FactionlariYukle()
-    local sonuc = MySQL.query.await('SELECT * FROM cf_factions')
-    for _, f in ipairs(sonuc) do
-        f.uyeler = {}
-        local uyeler = MySQL.query.await('SELECT * FROM cf_faction_uyeler WHERE faction_id = ?', { f.id })
-        for _, u in ipairs(uyeler) do
-            table.insert(f.uyeler, u)
-        end
-        Factionlar[f.id] = f
-    end
-    Log('Factionlar yüklendi: ' .. #sonuc)
-end
-
-local function TeritorileriYukle()
-    -- Önce config'dan oluştur/güncelle
-    for _, t in ipairs(Config.Territoriler) do
-        MySQL.query.await(
-            'INSERT INTO cf_territoriler (id, isim, x, y, z, radius, level) VALUES (?,?,?,?,?,?,?) ' ..
-            'ON DUPLICATE KEY UPDATE isim=VALUES(isim), x=VALUES(x), y=VALUES(y), z=VALUES(z), radius=VALUES(radius), level=VALUES(level)',
-            { t.id, t.isim, t.x, t.y, t.z, t.radius, t.level }
-        )
-    end
-    local sonuc = MySQL.query.await('SELECT * FROM cf_territoriler')
-    for _, t in ipairs(sonuc) do
-        TerritoryDurum[t.id] = {
-            id              = t.id,
-            isim            = t.isim,
-            x               = t.x,
-            y               = t.y,
-            z               = t.z,
-            radius          = t.radius,
-            level           = t.level,
-            ownerFactionId  = t.owner_faction_id,
-            captureProgress = t.capture_progress or 0.0,
-            sonCapture      = t.son_capture,
-            factionOzel     = t.faction_ozel,
-        }
-    end
-    Log('Territoriler yüklendi: ' .. #sonuc)
-end
-
-local function AktifSavaslarilYukle()
-    local sonuc = MySQL.query.await("SELECT * FROM cf_savaslar WHERE durum='aktif'")
-    for _, s in ipairs(sonuc) do
-        AktifSavaslar[s.id] = {
-            id           = s.id,
-            saldiranId   = s.saldiran_id,
-            savunucuId   = s.savunucu_id,
-            territoryId  = s.territory_id,
-            saldiranKill = s.saldiran_kill,
-            savunucuKill = s.savunucu_kill,
-            baslangic    = s.baslangic,
-            sure         = Config.SavasMaksSure,
-        }
-    end
-    Log('Aktif savaşlar yüklendi: ' .. #sonuc)
-end
-
--- ── Başlatma ─────────────────────────────────────────────────
+-- ─── Cache başlatma: Sunucu açıldığında DB'den yükle ─────────────────────────
 AddEventHandler('onResourceStart', function(resourceName)
     if resourceName ~= GetCurrentResourceName() then return end
-    Wait(500)
-    FactionlariYukle()
-    TeritorileriYukle()
-    AktifSavaslarilYukle()
-    -- Aktif sezon yoksa oluştur
-    local sezon = MySQL.query.await("SELECT id FROM cf_sezonlar WHERE aktif=1 LIMIT 1")
-    if #sezon == 0 then
-        MySQL.insert.await('INSERT INTO cf_sezonlar (aktif) VALUES (1)')
-        Log('Yeni sezon başlatıldı.')
-    end
-    HerkeseSyncGonder()
-    Log('Sistem başlatıldı.')
-end)
+    DebugPrint('Resource başlatılıyor, cache yükleniyor...')
 
--- ── ─────────────────────────────────────────────────────────
---   FACTION YÖNETİMİ
--- ── ─────────────────────────────────────────────────────────
-
--- Faction Oluştur
-RegisterNetEvent('cross-factions:factionOlustur', function(veri)
-    local source    = source
-    local citizenId = CitizenIdGetir(source)
-    if not citizenId then return end
-
-    local isim    = tostring(veri.isim or ''):sub(1, Config.FactionIsimMaxUzunluk)
-    local renk    = tostring(veri.renk or '')
-    local logoUrl = tostring(veri.logo_url or '')
-
-    if #isim < Config.FactionIsimMinUzunluk then
-        TriggerClientEvent('cross-factions:bildirim', source, 'Faction ismi en az ' .. Config.FactionIsimMinUzunluk .. ' karakter olmalı!', 'error')
-        return
-    end
-
-    -- Zaten bir factionda mı?
-    local fid, _, _ = OyuncuFactioniBul(citizenId)
-    if fid then
-        TriggerClientEvent('cross-factions:bildirim', source, 'Zaten bir faction üyesisin!', 'error')
-        return
-    end
-
-    -- İsim çakışması
-    for _, f in pairs(Factionlar) do
-        if f.isim:lower() == isim:lower() then
-            TriggerClientEvent('cross-factions:bildirim', source, 'Bu faction ismi zaten kullanılıyor!', 'error')
-            return
-        end
-        -- Renk çakışması
-        if f.renk == renk then
-            TriggerClientEvent('cross-factions:bildirim', source, 'Bu renk başka bir faction tarafından kullanılıyor!', 'error')
-            return
-        end
-    end
-
-    -- Renk geçerli mi?
-    local renkGecerli = false
-    for _, r in ipairs(Config.FactionRenkleri) do
-        if r == renk then renkGecerli = true break end
-    end
-    if not renkGecerli then
-        TriggerClientEvent('cross-factions:bildirim', source, 'Geçersiz renk!', 'error')
-        return
-    end
-
-    local oyuncuIsim = KaynakIsimGetir(source)
-    local insertId = MySQL.insert.await(
-        'INSERT INTO cf_factions (isim, renk, logo_url, lider_citizen) VALUES (?,?,?,?)',
-        { isim, renk, logoUrl, citizenId }
-    )
-    if not insertId then
-        TriggerClientEvent('cross-factions:bildirim', source, 'Faction oluşturulurken hata!', 'error')
-        return
-    end
-
-    Factionlar[insertId] = {
-        id            = insertId,
-        isim          = isim,
-        renk          = renk,
-        logo_url      = logoUrl,
-        lider_citizen = citizenId,
-        para          = 0,
-        wins          = 0,
-        sezon_wins    = 0,
-        uyeler        = {},
-    }
-
-    -- Lideri üye olarak ekle
-    MySQL.insert.await(
-        'INSERT INTO cf_faction_uyeler (faction_id, citizen_id, isim, yetki, maas) VALUES (?,?,?,?,?)',
-        { insertId, citizenId, oyuncuIsim, 5, Config.VarsayilanMaas }
-    )
-    table.insert(Factionlar[insertId].uyeler, {
-        faction_id = insertId,
-        citizen_id = citizenId,
-        isim       = oyuncuIsim,
-        yetki      = 5,
-        maas       = Config.VarsayilanMaas,
-    })
-
-    HerkeseSyncGonder()
-    TriggerClientEvent('cross-factions:bildirim', source, isim .. ' faction\'ı oluşturuldu!', 'success')
-    TabletVeriGonder(source)
-    Log('Faction oluşturuldu: ' .. isim .. ' (' .. citizenId .. ')')
-end)
-
--- Faction Sil (sadece lider)
-RegisterNetEvent('cross-factions:factionSil', function()
-    local source    = source
-    local citizenId = CitizenIdGetir(source)
-    if not citizenId then return end
-
-    local fid, f, uye = OyuncuFactioniBul(citizenId)
-    if not fid then
-        TriggerClientEvent('cross-factions:bildirim', source, 'Bir faction\'a üye değilsin!', 'error')
-        return
-    end
-    if uye.yetki < 5 then
-        TriggerClientEvent('cross-factions:bildirim', source, 'Sadece lider faction\'ı silebilir!', 'error')
-        return
-    end
-
-    MySQL.query.await('DELETE FROM cf_factions WHERE id = ?', { fid })
-    Factionlar[fid] = nil
-    HerkeseSyncGonder()
-    TriggerClientEvent('cross-factions:bildirim', source, 'Faction silindi.', 'success')
-    TabletVeriGonder(source)
-end)
-
--- Üye Davet Et
-RegisterNetEvent('cross-factions:uyeDavetEt', function(hedefCitizenId)
-    local source    = source
-    local citizenId = CitizenIdGetir(source)
-    if not citizenId then return end
-
-    local fid, f, uye = OyuncuFactioniBul(citizenId)
-    if not fid or uye.yetki < 3 then
-        TriggerClientEvent('cross-factions:bildirim', source, 'Yetkin yetersiz!', 'error')
-        return
-    end
-
-    if #f.uyeler >= Config.MaxFactionUyeSayisi then
-        TriggerClientEvent('cross-factions:bildirim', source, 'Faction üye limiti doldu!', 'error')
-        return
-    end
-
-    -- Hedef zaten factionda mı?
-    local hfid = OyuncuFactioniBul(hedefCitizenId)
-    if hfid then
-        TriggerClientEvent('cross-factions:bildirim', source, 'Oyuncu zaten bir factionda!', 'error')
-        return
-    end
-
-    -- Online oyuncu mu bul
-    local hedefSource = nil
-    local tumOyuncular = QBCore.Functions.GetQBPlayers()
-    for _, p in pairs(tumOyuncular) do
-        if p.PlayerData.citizenid == hedefCitizenId then
-            hedefSource = p.PlayerData.source
-            break
-        end
-    end
-
-    if not hedefSource then
-        TriggerClientEvent('cross-factions:bildirim', source, 'Oyuncu çevrimiçi değil!', 'error')
-        return
-    end
-
-    -- Daveti gönder
-    TriggerClientEvent('cross-factions:davetAl', hedefSource, fid, f.isim, citizenId)
-    TriggerClientEvent('cross-factions:bildirim', source, 'Davet gönderildi.', 'success')
-end)
-
--- Davet Kabul
-RegisterNetEvent('cross-factions:davetKabul', function(factionId)
-    local source    = source
-    local citizenId = CitizenIdGetir(source)
-    if not citizenId then return end
-
-    local f = Factionlar[factionId]
-    if not f then return end
-
-    if #f.uyeler >= Config.MaxFactionUyeSayisi then
-        TriggerClientEvent('cross-factions:bildirim', source, 'Faction üye limiti doldu!', 'error')
-        return
-    end
-
-    local mevcutFid = OyuncuFactioniBul(citizenId)
-    if mevcutFid then
-        TriggerClientEvent('cross-factions:bildirim', source, 'Zaten bir faction üyesisin!', 'error')
-        return
-    end
-
-    local oyuncuIsim = KaynakIsimGetir(source)
-    MySQL.insert.await(
-        'INSERT INTO cf_faction_uyeler (faction_id, citizen_id, isim, yetki, maas) VALUES (?,?,?,?,?)',
-        { factionId, citizenId, oyuncuIsim, 1, Config.VarsayilanMaas }
-    )
-    table.insert(f.uyeler, {
-        faction_id = factionId,
-        citizen_id = citizenId,
-        isim       = oyuncuIsim,
-        yetki      = 1,
-        maas       = Config.VarsayilanMaas,
-    })
-
-    HerkeseSyncGonder()
-    TriggerClientEvent('cross-factions:bildirim', source, f.isim .. ' factionına katıldın!', 'success')
-end)
-
--- Üye Kov
-RegisterNetEvent('cross-factions:uyeKov', function(hedefCitizenId)
-    local source    = source
-    local citizenId = CitizenIdGetir(source)
-    if not citizenId then return end
-
-    local fid, f, uye = OyuncuFactioniBul(citizenId)
-    if not fid or uye.yetki < 3 then
-        TriggerClientEvent('cross-factions:bildirim', source, 'Yetkin yetersiz!', 'error')
-        return
-    end
-
-    -- Hedef bul
-    local hedefIdx = nil
-    local hedefUye = nil
-    for i, u in ipairs(f.uyeler) do
-        if u.citizen_id == hedefCitizenId then
-            hedefIdx = i
-            hedefUye = u
-            break
-        end
-    end
-
-    if not hedefUye then
-        TriggerClientEvent('cross-factions:bildirim', source, 'Üye bulunamadı!', 'error')
-        return
-    end
-
-    if hedefUye.yetki >= uye.yetki then
-        TriggerClientEvent('cross-factions:bildirim', source, 'Daha yüksek veya eşit yetkideki birini kovamazsın!', 'error')
-        return
-    end
-
-    MySQL.query.await('DELETE FROM cf_faction_uyeler WHERE faction_id=? AND citizen_id=?', { fid, hedefCitizenId })
-    table.remove(f.uyeler, hedefIdx)
-
-    HerkeseSyncGonder()
-    TriggerClientEvent('cross-factions:bildirim', source, hedefUye.isim .. ' faction\'dan kovuldu.', 'success')
-end)
-
--- Factiondan Ayrıl
-RegisterNetEvent('cross-factions:factionAyril', function()
-    local source    = source
-    local citizenId = CitizenIdGetir(source)
-    if not citizenId then return end
-
-    local fid, f, uye = OyuncuFactioniBul(citizenId)
-    if not fid then return end
-
-    if uye.yetki == 5 and #f.uyeler > 1 then
-        TriggerClientEvent('cross-factions:bildirim', source, 'Ayrılmadan önce liderliği başka birine devredin!', 'error')
-        return
-    end
-
-    MySQL.query.await('DELETE FROM cf_faction_uyeler WHERE faction_id=? AND citizen_id=?', { fid, citizenId })
-    for i, u in ipairs(f.uyeler) do
-        if u.citizen_id == citizenId then
-            table.remove(f.uyeler, i)
-            break
-        end
-    end
-
-    if #f.uyeler == 0 then
-        MySQL.query.await('DELETE FROM cf_factions WHERE id=?', { fid })
-        Factionlar[fid] = nil
-    end
-
-    HerkeseSyncGonder()
-    TriggerClientEvent('cross-factions:bildirim', source, 'Faction\'dan ayrıldın.', 'success')
-    TabletVeriGonder(source)
-end)
-
--- Yetki Ata
-RegisterNetEvent('cross-factions:yetkiAta', function(hedefCitizenId, yeniYetki)
-    local source    = source
-    local citizenId = CitizenIdGetir(source)
-    if not citizenId then return end
-
-    yeniYetki = tonumber(yeniYetki) or 1
-    if yeniYetki < 1 or yeniYetki > 5 then return end
-
-    local fid, f, uye = OyuncuFactioniBul(citizenId)
-    if not fid or uye.yetki < 4 then
-        TriggerClientEvent('cross-factions:bildirim', source, 'Yetkin yetersiz!', 'error')
-        return
-    end
-
-    for _, u in ipairs(f.uyeler) do
-        if u.citizen_id == hedefCitizenId then
-            if yeniYetki >= uye.yetki and uye.yetki < 5 then
-                TriggerClientEvent('cross-factions:bildirim', source, 'Kendi yetkinizden yüksek yetki veremezsiniz!', 'error')
-                return
-            end
-            u.yetki = yeniYetki
-            MySQL.query.await('UPDATE cf_faction_uyeler SET yetki=? WHERE faction_id=? AND citizen_id=?',
-                { yeniYetki, fid, hedefCitizenId })
-            HerkeseSyncGonder()
-            TriggerClientEvent('cross-factions:bildirim', source, u.isim .. ' yetkisi güncellendi.', 'success')
-            return
-        end
-    end
-    TriggerClientEvent('cross-factions:bildirim', source, 'Üye bulunamadı!', 'error')
-end)
-
--- Maaş Güncelle
-RegisterNetEvent('cross-factions:maasGuncelle', function(hedefCitizenId, yeniMaas)
-    local source    = source
-    local citizenId = CitizenIdGetir(source)
-    if not citizenId then return end
-
-    yeniMaas = tonumber(yeniMaas) or Config.VarsayilanMaas
-    if yeniMaas < 0 then yeniMaas = 0 end
-
-    local fid, f, uye = OyuncuFactioniBul(citizenId)
-    if not fid or uye.yetki < 4 then
-        TriggerClientEvent('cross-factions:bildirim', source, 'Yetkin yetersiz!', 'error')
-        return
-    end
-
-    for _, u in ipairs(f.uyeler) do
-        if u.citizen_id == hedefCitizenId then
-            u.maas = yeniMaas
-            MySQL.query.await('UPDATE cf_faction_uyeler SET maas=? WHERE faction_id=? AND citizen_id=?',
-                { yeniMaas, fid, hedefCitizenId })
-            HerkeseSyncGonder()
-            TriggerClientEvent('cross-factions:bildirim', source, u.isim .. ' maaşı $' .. yeniMaas .. ' olarak güncellendi.', 'success')
-            return
-        end
-    end
-    TriggerClientEvent('cross-factions:bildirim', source, 'Üye bulunamadı!', 'error')
-end)
-
--- Faction Bilgisi Güncelle (logo, renk)
-RegisterNetEvent('cross-factions:factionGuncelle', function(veri)
-    local source    = source
-    local citizenId = CitizenIdGetir(source)
-    if not citizenId then return end
-
-    local fid, f, uye = OyuncuFactioniBul(citizenId)
-    if not fid or uye.yetki < 5 then
-        TriggerClientEvent('cross-factions:bildirim', source, 'Yetkin yetersiz!', 'error')
-        return
-    end
-
-    local yeniRenk   = tostring(veri.renk or f.renk)
-    local yeniLogo   = tostring(veri.logo_url or f.logo_url or '')
-
-    -- Renk çakışma kontrolü
-    if yeniRenk ~= f.renk then
-        for oid, of in pairs(Factionlar) do
-            if oid ~= fid and of.renk == yeniRenk then
-                TriggerClientEvent('cross-factions:bildirim', source, 'Bu renk başka bir faction tarafından kullanılıyor!', 'error')
-                return
-            end
-        end
-        -- Renk geçerli mi?
-        local renkGecerli = false
-        for _, r in ipairs(Config.FactionRenkleri) do
-            if r == yeniRenk then renkGecerli = true break end
-        end
-        if not renkGecerli then
-            TriggerClientEvent('cross-factions:bildirim', source, 'Geçersiz renk!', 'error')
-            return
-        end
-    end
-
-    f.renk     = yeniRenk
-    f.logo_url = yeniLogo
-    MySQL.query.await('UPDATE cf_factions SET renk=?, logo_url=? WHERE id=?', { yeniRenk, yeniLogo, fid })
-    HerkeseSyncGonder()
-    TriggerClientEvent('cross-factions:bildirim', source, 'Faction güncellendi.', 'success')
-    TabletVeriGonder(source)
-end)
-
--- ── ─────────────────────────────────────────────────────────
---   TERRITORY
--- ── ─────────────────────────────────────────────────────────
-
-local function TerritoryGuncelle(tId)
-    local t = TerritoryDurum[tId]
-    if not t then return end
-    MySQL.query.await(
-        'UPDATE cf_territoriler SET owner_faction_id=?, capture_progress=?, son_capture=NOW() WHERE id=?',
-        { t.ownerFactionId, t.captureProgress, tId }
-    )
-end
-
--- Capture döngüsü – her saniye çalışır
-CreateThread(function()
-    while true do
-        Wait(1000)
-        local senkronGerekli = false
-
-        for tId, capture in pairs(CaptureIslemleri) do
-            local t = TerritoryDurum[tId]
-            if not t then
-                CaptureIslemleri[tId] = nil
-                goto devam
-            end
-
-            -- Cooldown kontrolü
-            if t.sonCapture then
-                local gecen = os.time() - (t.sonCapture or 0)
-                if gecen < Config.TerritoryCooldownSuresi then
-                    TriggerClientEvent('cross-factions:territoryDurum', -1, tId, 'cooldown', Config.TerritoryCooldownSuresi - gecen)
-                    goto devam
+    -- Gang cache
+    MySQL.query('SELECT * FROM cf_gangs', {}, function(gangs)
+        if gangs then
+            for _, gang in ipairs(gangs) do
+                GangCache[gang.id] = gang
+                -- JSON alanlarını parse et
+                if type(gang.settings) == 'string' then
+                    GangCache[gang.id].settings = json.decode(gang.settings) or {}
                 end
             end
-
-            -- Online olan, bu bölgedeki faction oyuncularını say
-            local fOyuncular    = 0
-            local rakipOyuncular = 0
-
-            local tumOyuncular = QBCore.Functions.GetQBPlayers()
-            for _, p in pairs(tumOyuncular) do
-                local pSource = p.PlayerData.source
-                local pCoords = GetEntityCoords(GetPlayerPed(pSource))
-                local dist    = #(vector3(t.x, t.y, t.z) - pCoords)
-
-                if dist <= t.radius then
-                    local pfid = OyuncuFactioniBul(p.PlayerData.citizenid)
-                    if pfid == capture.factionId then
-                        fOyuncular = fOyuncular + 1
-                    elseif pfid then
-                        rakipOyuncular = rakipOyuncular + 1
-                    end
-                end
-            end
-
-            if fOyuncular < Config.TerritoryYakalamaMinoyuncu then
-                -- Yetersiz oyuncu → progress düşme
-                if t.captureProgress > 0 then
-                    t.captureProgress = math.max(0, t.captureProgress - 0.5)
-                    senkronGerekli = true
-                end
-            else
-                local artis = (100.0 / Config.TerritoryYakalamaMaxSure)
-                if rakipOyuncular > 0 then
-                    artis = artis * Config.TerritoryYavaşlamaÇarpan
-                end
-                t.captureProgress = math.min(100.0, t.captureProgress + artis)
-                senkronGerekli = true
-
-                if t.captureProgress >= 100.0 then
-                    -- Capture tamamlandı
-                    t.ownerFactionId  = capture.factionId
-                    t.captureProgress = 100.0
-                    t.sonCapture      = os.time()
-                    TerritoryGuncelle(tId)
-                    CaptureIslemleri[tId] = nil
-                    TriggerClientEvent('cross-factions:territoryAlindi', -1, tId, capture.factionId)
-                    Log('Territory ele geçirildi: ' .. tId .. ' → faction ' .. capture.factionId)
-                end
-            end
-
-            ::devam::
         end
+        DebugPrint(('Gang cache yüklendi: %d gang'):format(#(gangs or {})))
+    end)
 
-        if senkronGerekli then
-            HerkeseSyncGonder()
-        end
-    end
-end)
-
--- Capture başlat
-RegisterNetEvent('cross-factions:captureBaslat', function(tId)
-    local source    = source
-    local citizenId = CitizenIdGetir(source)
-    if not citizenId then return end
-
-    local fid, f, uye = OyuncuFactioniBul(citizenId)
-    if not fid then
-        TriggerClientEvent('cross-factions:bildirim', source, 'Bir faction\'a üye değilsin!', 'error')
-        return
-    end
-
-    local t = TerritoryDurum[tId]
-    if not t then return end
-
-    if t.ownerFactionId == fid then
-        TriggerClientEvent('cross-factions:bildirim', source, 'Bu bölge zaten sizin!', 'error')
-        return
-    end
-
-    -- Cooldown
-    if t.sonCapture then
-        local gecen = os.time() - t.sonCapture
-        if gecen < Config.TerritoryCooldownSuresi then
-            TriggerClientEvent('cross-factions:bildirim', source, 'Bu bölge cooldown\'da! (' .. (Config.TerritoryCooldownSuresi - gecen) .. 's)', 'error')
-            return
-        end
-    end
-
-    -- Aktif savaş var mı?
-    local savasVar = false
-    for _, s in pairs(AktifSavaslar) do
-        if (s.saldiranId == fid or s.savunucuId == fid) then
-            -- Bölge belirtilmemiş (genel savaş) ya da bu bölge için savaş açılmış
-            if not s.territoryId or s.territoryId == tId then
-                savasVar = true
-                break
+    -- Member cache
+    MySQL.query('SELECT citizenid, gang_id, rank_index FROM cf_gang_members', {}, function(members)
+        if members then
+            for _, m in ipairs(members) do
+                MemberCache[m.citizenid] = {
+                    gangId     = m.gang_id,
+                    rankIndex  = m.rank_index,
+                }
             end
         end
-    end
-    if not savasVar then
-        -- Savaş yokken capture yapılamaz; önce savaş ilan edilmesi gerekmektedir.
-        TriggerClientEvent('cross-factions:bildirim', source, 'Bu bölgeyi ele geçirmek için önce savaş ilan etmeniz gerekiyor!', 'error')
-        return
-    end
+        DebugPrint(('Member cache yüklendi: %d üye'):format(#(members or {})))
+    end)
 
-    if CaptureIslemleri[tId] then
-        TriggerClientEvent('cross-factions:bildirim', source, 'Bu bölge zaten capture ediliyor!', 'error')
-        return
-    end
+    -- Turf cache
+    MySQL.query('SELECT turf_id, owner_gang_id, cooldown_until FROM cf_turf_ownership', {}, function(turfs)
+        if turfs then
+            for _, t in ipairs(turfs) do
+                TurfCache[t.turf_id] = {
+                    owner         = t.owner_gang_id,
+                    cooldownUntil = t.cooldown_until or 0,
+                }
+            end
+        end
+        DebugPrint(('Turf cache yüklendi: %d turf'))
+    end)
 
-    -- Sıfırla ve başlat
-    t.captureProgress = 0.0
-    CaptureIslemleri[tId] = { factionId = fid, baslangic = os.time() }
-    TriggerClientEvent('cross-factions:captureBasladi', -1, tId, fid)
-    HerkeseSyncGonder()
-    TriggerClientEvent('cross-factions:bildirim', source, t.isim .. ' capture başladı!', 'success')
+    -- Alliance cache
+    MySQL.query("SELECT gang1_id, gang2_id FROM cf_gang_alliances WHERE status = 'active'", {}, function(alliances)
+        if alliances then
+            for _, a in ipairs(alliances) do
+                local key = math.min(a.gang1_id, a.gang2_id) .. ':' .. math.max(a.gang1_id, a.gang2_id)
+                AllyCache[key] = true
+            end
+        end
+    end)
+
+    DebugPrint('Cache yükleme tamamlandı.')
 end)
 
--- Capture durdur
-RegisterNetEvent('cross-factions:captureDurdur', function(tId)
-    local source    = source
-    local citizenId = CitizenIdGetir(source)
-    if not citizenId then return end
-
-    local fid = OyuncuFactioniBul(citizenId)
-    if not fid then return end
-
-    if CaptureIslemleri[tId] and CaptureIslemleri[tId].factionId == fid then
-        CaptureIslemleri[tId] = nil
-        TerritoryDurum[tId].captureProgress = 0.0
-        HerkeseSyncGonder()
-        TriggerClientEvent('cross-factions:bildirim', source, 'Capture durduruldu.', 'error')
-    end
+-- ─── Oyuncu Bağlantısı: MemberCache güncelle ─────────────────────────────────
+AddEventHandler('QBCore:Server:PlayerLoaded', function(player)
+    local cid = player.PlayerData.citizenid
+    MySQL.query('SELECT gang_id, rank_index FROM cf_gang_members WHERE citizenid = ?', { cid }, function(rows)
+        if rows and rows[1] then
+            MemberCache[cid] = {
+                gangId    = rows[1].gang_id,
+                rankIndex = rows[1].rank_index,
+            }
+        else
+            MemberCache[cid] = nil
+        end
+    end)
 end)
 
--- ── ─────────────────────────────────────────────────────────
---   SAVAŞ SİSTEMİ
--- ── ─────────────────────────────────────────────────────────
+AddEventHandler('QBCore:Server:PlayerUnload', function(source)
+    -- Cache'i temizleme, oyuncu tekrar bağlandığında güncellenecek
+    -- (Cache performans için tutulur; kaynak israfı değildir)
+    local _ = GetCitizenId(source)
+end)
 
-local function SavasBit(savasId, kazananId, sebep)
-    local s = AktifSavaslar[savasId]
-    if not s then return end
+-- ─── Kill Tracking: Oyuncu öldürme ───────────────────────────────────────────
+-- Client, öldürme gerçekleştiğinde bu eventi tetikler
+RegisterNetEvent('cross-factions:server:registerKill', function(victimSrc)
+    local killerSrc = source
+    local killerCid = GetCitizenId(killerSrc)
+    local victimCid = GetCitizenId(victimSrc)
+    if not killerCid or not victimCid then return end
+    if killerCid == victimCid then return end  -- kendini öldürme
 
-    s.durum    = 'bitti'
-    s.kaybeden = (kazananId == s.saldiranId) and s.savunucuId or s.saldiranId
+    -- Gang kontrolü
+    local killerMember = MemberCache[killerCid]
+    local victimMember = MemberCache[victimCid]
+    if not killerMember or not victimMember then return end
+    if killerMember.gangId == victimMember.gangId then return end  -- aynı gang
 
-    MySQL.query.await(
-        'UPDATE cf_savaslar SET durum=?, kazanan_id=?, bitis=NOW() WHERE id=?',
-        { 'bitti', kazananId, savasId }
+    -- Anti-farm: aynı hedefe kısa sürede tekrar kill
+    local farmKey = killerCid .. ':' .. victimCid
+    local now = os.time()
+    if KillCooldown[farmKey] and (now - KillCooldown[farmKey]) < Config.War.KillFarmCooldown then
+        DebugPrint(('Kill farm engellendi: %s → %s'):format(killerCid, victimCid))
+        return
+    end
+    KillCooldown[farmKey] = now
+
+    -- Kill logu kaydet
+    local killerGangId = killerMember.gangId
+    local victimGangId = victimMember.gangId
+
+    MySQL.insert(
+        'INSERT INTO cf_kill_logs (killer_cid, victim_cid, killer_gang_id, victim_gang_id, killed_at) VALUES (?, ?, ?, ?, NOW())',
+        { killerCid, victimCid, killerGangId, victimGangId },
+        function(id)
+            DebugPrint(('Kill log eklendi: %s → %s (id=%d)'):format(killerCid, victimCid, id or 0))
+        end
     )
 
-    -- Kazanan faction wins artır
-    if kazananId and Factionlar[kazananId] then
-        Factionlar[kazananId].wins      = (Factionlar[kazananId].wins or 0) + 1
-        Factionlar[kazananId].sezon_wins = (Factionlar[kazananId].sezon_wins or 0) + 1
-        MySQL.query.await('UPDATE cf_factions SET wins=wins+1, sezon_wins=sezon_wins+1 WHERE id=?', { kazananId })
-    end
+    -- Aktif savaş varsa war score güncelle
+    TriggerEvent('cross-factions:internal:warKill', killerGangId, victimGangId, killerCid, victimCid)
 
-    TriggerClientEvent('cross-factions:savasBitti', -1, savasId, kazananId, sebep)
-    AktifSavaslar[savasId] = nil
-    HerkeseSyncGonder()
-    Log('Savaş bitti: ' .. savasId .. ' → kazanan faction ' .. tostring(kazananId) .. ' (' .. sebep .. ')')
-end
-
--- Savaş ilan et
-RegisterNetEvent('cross-factions:savasIlanEt', function(hedefFactionId, territoryId)
-    local source    = source
-    local citizenId = CitizenIdGetir(source)
-    if not citizenId then return end
-
-    hedefFactionId = tonumber(hedefFactionId)
-    territoryId    = tonumber(territoryId)
-
-    local fid, f, uye = OyuncuFactioniBul(citizenId)
-    if not fid or uye.yetki < 4 then
-        TriggerClientEvent('cross-factions:bildirim', source, 'Yetkin yetersiz!', 'error')
-        return
-    end
-
-    if fid == hedefFactionId then
-        TriggerClientEvent('cross-factions:bildirim', source, 'Kendinize savaş ilan edemezsiniz!', 'error')
-        return
-    end
-
-    if not Factionlar[hedefFactionId] then
-        TriggerClientEvent('cross-factions:bildirim', source, 'Hedef faction bulunamadı!', 'error')
-        return
-    end
-
-    -- Cooldown
-    local simdi = os.time()
-    if SonSavasIlan[fid] and (simdi - SonSavasIlan[fid]) < Config.SavasIlanCooldown then
-        local kalan = Config.SavasIlanCooldown - (simdi - SonSavasIlan[fid])
-        TriggerClientEvent('cross-factions:bildirim', source, 'Savaş ilan cooldown\'da! (' .. kalan .. 's)', 'error')
-        return
-    end
-
-    -- Zaten aktif savaş var mı?
-    for _, s in pairs(AktifSavaslar) do
-        if (s.saldiranId == fid or s.savunucuId == fid) then
-            TriggerClientEvent('cross-factions:bildirim', source, 'Zaten aktif bir savaşınız var!', 'error')
-            return
-        end
-    end
-
-    SonSavasIlan[fid] = simdi
-    local insertId = MySQL.insert.await(
-        'INSERT INTO cf_savaslar (saldiran_id, savunucu_id, territory_id, durum) VALUES (?,?,?,?)',
-        { fid, hedefFactionId, territoryId, 'aktif' }
-    )
-
-    AktifSavaslar[insertId] = {
-        id           = insertId,
-        saldiranId   = fid,
-        savunucuId   = hedefFactionId,
-        territoryId  = territoryId,
-        saldiranKill = 0,
-        savunucuKill = 0,
-        sure         = Config.SavasMaksSure,
-        baslangic    = simdi,
-    }
-
-    -- Capture'a izin ver
-    if territoryId and TerritoryDurum[territoryId] then
-        TerritoryDurum[territoryId].captureProgress = 0.0
-        CaptureIslemleri[territoryId] = { factionId = fid, baslangic = simdi }
-    end
-
-    HerkeseSyncGonder()
-    TriggerClientEvent('cross-factions:bildirim', -1,
-        f.isim .. ' → ' .. Factionlar[hedefFactionId].isim .. ' savaşı başladı!', 'warning')
-    Log('Savaş ilan: ' .. fid .. ' vs ' .. hedefFactionId)
-end)
-
--- Kill bildirimi (ölüm scriptiyle entegre)
-RegisterNetEvent('cross-factions:savasKillBildir', function(oldurenSource)
-    local source    = source
-    local citizenId = CitizenIdGetir(source)
-    if not citizenId then return end
-
-    local oldurenCitizen = CitizenIdGetir(oldurenSource)
-    if not oldurenCitizen then return end
-
-    local fid1 = OyuncuFactioniBul(citizenId)
-    local fid2 = OyuncuFactioniBul(oldurenCitizen)
-    if not fid1 or not fid2 or fid1 == fid2 then return end
-
-    for savasId, s in pairs(AktifSavaslar) do
-        if (s.saldiranId == fid2 and s.savunucuId == fid1) then
-            s.saldiranKill = s.saldiranKill + 1
-            MySQL.query.await('UPDATE cf_savaslar SET saldiran_kill=? WHERE id=?', { s.saldiranKill, savasId })
-            TriggerClientEvent('cross-factions:savasGuncelle', -1, savasId, s)
-            if s.saldiranKill >= Config.SavasKazanmaKill then
-                SavasBit(savasId, s.saldiranId, 'kill')
-            end
-            return
-        elseif (s.savunucuId == fid2 and s.saldiranId == fid1) then
-            s.savunucuKill = s.savunucuKill + 1
-            MySQL.query.await('UPDATE cf_savaslar SET savunucu_kill=? WHERE id=?', { s.savunucuKill, savasId })
-            TriggerClientEvent('cross-factions:savasGuncelle', -1, savasId, s)
-            if s.savunucuKill >= Config.SavasKazanmaKill then
-                SavasBit(savasId, s.savunucuId, 'kill')
-            end
-            return
-        end
-    end
-end)
-
--- Savaş süresi takibi
-CreateThread(function()
-    while true do
-        Wait(5000)
-        local simdi = os.time()
-        for savasId, s in pairs(AktifSavaslar) do
-            if (simdi - s.baslangic) >= Config.SavasMaksSure then
-                -- Berabere veya üstün olan kazanır
-                local kazanan = nil
-                if s.saldiranKill > s.savunucuKill then
-                    kazanan = s.saldiranId
-                elseif s.savunucuKill > s.saldiranKill then
-                    kazanan = s.savunucuId
-                end
-                SavasBit(savasId, kazanan, 'sure')
-            end
-        end
-    end
-end)
-
--- ── ─────────────────────────────────────────────────────────
---   SEZON SİSTEMİ
--- ── ─────────────────────────────────────────────────────────
-
-local function SezonBitir()
-    -- Kazananı bul
-    local enCokWin = 0
-    local kazananId = nil
-    for fid, f in pairs(Factionlar) do
-        if (f.sezon_wins or 0) > enCokWin then
-            enCokWin  = f.sezon_wins
-            kazananId = fid
-        end
-    end
-
-    -- DB güncelle
-    MySQL.query.await("UPDATE cf_sezonlar SET aktif=0, kazanan_id=?, bitis=NOW() WHERE aktif=1", { kazananId })
-    -- Yeni sezon başlat
-    MySQL.insert.await('INSERT INTO cf_sezonlar (aktif) VALUES (1)')
-
-    -- Ödül ver
-    if kazananId and Factionlar[kazananId] then
-        local f = Factionlar[kazananId]
-        MySQL.query.await('UPDATE cf_factions SET para=para+? WHERE id=?', { Config.SezonOdulPara, kazananId })
-        f.para = (f.para or 0) + Config.SezonOdulPara
-
-        -- Online oyunculara item ver
-        local tumOyuncular = QBCore.Functions.GetQBPlayers()
-        for _, p in pairs(tumOyuncular) do
-            local pfid = OyuncuFactioniBul(p.PlayerData.citizenid)
-            if pfid == kazananId then
-                p.Functions.AddItem(Config.SezonOdulItem, Config.SezonOdulItemMiktar)
-                TriggerClientEvent('cross-factions:bildirim', p.PlayerData.source,
-                    'Sezon ödülü aldınız: $' .. Config.SezonOdulPara .. ' + ' .. Config.SezonOdulItemMiktar .. 'x ' .. Config.SezonOdulItem, 'success')
-            end
-        end
-
-        TriggerClientEvent('cross-factions:bildirim', -1, f.isim .. ' sezonu kazandı! Ödüller dağıtıldı.', 'success')
-    end
-
-    -- Sezon wins sıfırla
-    MySQL.query.await('UPDATE cf_factions SET sezon_wins=0')
-    for _, f in pairs(Factionlar) do
-        f.sezon_wins = 0
-    end
-
-    HerkeseSyncGonder()
-    Log('Sezon bitti. Kazanan: ' .. tostring(kazananId))
-end
-
--- Sezon süresi günlük kontrol
-CreateThread(function()
-    while true do
-        Wait(3600 * 1000) -- Her saat kontrol et
-        local sezon = MySQL.query.await("SELECT id, baslangic FROM cf_sezonlar WHERE aktif=1 LIMIT 1")
-        if #sezon > 0 then
-            -- MySQL TIMESTAMPDIFF ile geçen süreyi saniye cinsinden alarak sezon süresini kontrol et
-            -- Config.SezonSuresi gün → saniye
-            local sezonSaniye = Config.SezonSuresi * 24 * 3600
-            local kontrol = MySQL.query.await(
-                "SELECT TIMESTAMPDIFF(SECOND, baslangic, NOW()) AS gecen FROM cf_sezonlar WHERE aktif=1 LIMIT 1"
+    -- Kill log Discord
+    local killerPlayer = GetPlayer(killerSrc)
+    local victimPlayer = GetPlayer(victimSrc)
+    if killerPlayer and victimPlayer then
+        local killerName = killerPlayer.PlayerData.charinfo.firstname .. ' ' .. killerPlayer.PlayerData.charinfo.lastname
+        local victimName = victimPlayer.PlayerData.charinfo.firstname .. ' ' .. victimPlayer.PlayerData.charinfo.lastname
+        LogKill(
+            '🔫 Kill Logu',
+            ('**Öldüren:** %s (Gang ID: %d)\n**Ölen:** %s (Gang ID: %d)'):format(
+                killerName, killerGangId, victimName, victimGangId
             )
-            if #kontrol > 0 and kontrol[1].gecen >= sezonSaniye then
-                SezonBitir()
-            end
-        end
-    end
-end)
-
--- ── ─────────────────────────────────────────────────────────
---   GÖREV / CONTRACT SİSTEMİ
--- ── ─────────────────────────────────────────────────────────
-
-RegisterNetEvent('cross-factions:gorevAl', function(gorevConfigId)
-    local source    = source
-    local citizenId = CitizenIdGetir(source)
-    if not citizenId then return end
-
-    gorevConfigId = tonumber(gorevConfigId)
-    local fid, f, uye = OyuncuFactioniBul(citizenId)
-    if not fid or uye.yetki < 3 then
-        TriggerClientEvent('cross-factions:bildirim', source, 'Yetkin yetersiz!', 'error')
-        return
-    end
-
-    -- Zaten aktif görev?
-    if AktifGorevler[fid] then
-        TriggerClientEvent('cross-factions:bildirim', source, 'Zaten aktif bir göreviniz var!', 'error')
-        return
-    end
-
-    -- Görev var mı?
-    local gorevCfg = nil
-    for _, g in ipairs(Config.Gorevler) do
-        if g.id == gorevConfigId then gorevCfg = g break end
-    end
-    if not gorevCfg then return end
-
-    local insertId = MySQL.insert.await(
-        'INSERT INTO cf_gorevler (faction_id, gorev_config_id, durum) VALUES (?,?,?)',
-        { fid, gorevConfigId, 'aktif' }
-    )
-
-    AktifGorevler[fid] = {
-        id          = insertId,
-        factionId   = fid,
-        configId    = gorevConfigId,
-        isim        = gorevCfg.isim,
-        aciklama    = gorevCfg.aciklama,
-        odulPara    = gorevCfg.odulPara,
-        odulItem    = gorevCfg.odulItem,
-        baslangic   = os.time(),
-        sure        = gorevCfg.sure,
-    }
-
-    TriggerClientEvent('cross-factions:bildirim', source, '"' .. gorevCfg.isim .. '" görevi başladı!', 'success')
-    HerkeseSyncGonder()
-    TabletVeriGonder(source)
-end)
-
-RegisterNetEvent('cross-factions:gorevTamamla', function(gorevId)
-    local source    = source
-    local citizenId = CitizenIdGetir(source)
-    if not citizenId then return end
-
-    local fid, f, uye = OyuncuFactioniBul(citizenId)
-    if not fid then return end
-
-    local gorev = AktifGorevler[fid]
-    if not gorev or gorev.id ~= tonumber(gorevId) then
-        TriggerClientEvent('cross-factions:bildirim', source, 'Aktif görev bulunamadı!', 'error')
-        return
-    end
-
-    MySQL.query.await('UPDATE cf_gorevler SET durum=?, bitis=NOW() WHERE id=?', { 'tamamlandi', gorev.id })
-
-    -- Ödül
-    MySQL.query.await('UPDATE cf_factions SET para=para+? WHERE id=?', { gorev.odulPara, fid })
-    f.para = (f.para or 0) + gorev.odulPara
-
-    if gorev.odulItem then
-        local oyuncu = QBCore.Functions.GetPlayer(source)
-        if oyuncu then
-            oyuncu.Functions.AddItem(gorev.odulItem, 1)
-        end
-    end
-
-    AktifGorevler[fid] = nil
-    HerkeseSyncGonder()
-    TriggerClientEvent('cross-factions:bildirim', source, '"' .. gorev.isim .. '" görevi tamamlandı! Ödül: $' .. gorev.odulPara, 'success')
-    TabletVeriGonder(source)
-end)
-
--- Görev süresi kontrolü
-CreateThread(function()
-    while true do
-        Wait(10000)
-        local simdi = os.time()
-        for fid, gorev in pairs(AktifGorevler) do
-            if (simdi - gorev.baslangic) >= gorev.sure then
-                MySQL.query.await('UPDATE cf_gorevler SET durum=?, bitis=NOW() WHERE id=?', { 'basarisiz', gorev.id })
-                AktifGorevler[fid] = nil
-                -- Online üyelere bildir
-                local tumOyuncular = QBCore.Functions.GetQBPlayers()
-                for _, p in pairs(tumOyuncular) do
-                    local pfid = OyuncuFactioniBul(p.PlayerData.citizenid)
-                    if pfid == fid then
-                        TriggerClientEvent('cross-factions:bildirim', p.PlayerData.source,
-                            '"' .. gorev.isim .. '" görevi başarısız! Süre doldu.', 'error')
-                    end
-                end
-            end
-        end
-    end
-end)
-
--- ── ─────────────────────────────────────────────────────────
---   TABLETİ AÇ / SYNC
--- ── ─────────────────────────────────────────────────────────
-
-RegisterNetEvent('cross-factions:tabletAc', function()
-    local source = source
-    TabletVeriGonder(source)
-end)
-
--- İstemci sync talebi
-RegisterNetEvent('cross-factions:syncIste', function()
-    HerkeseSyncGonder()
-end)
-
--- ── ─────────────────────────────────────────────────────────
---   FACTION BÖLGE YERLEŞTİRME
--- ── ─────────────────────────────────────────────────────────
-
--- Faction liderinin mevcut konumuna bölge koyması / güncellemesi
-RegisterNetEvent('cross-factions:territoryYerlestir', function(x, y, z)
-    local source    = source
-    local citizenId = CitizenIdGetir(source)
-    if not citizenId then return end
-
-    x = tonumber(x)
-    y = tonumber(y)
-    z = tonumber(z)
-    if not x or not y or not z then return end
-
-    -- GTA5 dünya sınırları kontrolü
-    if x < -4000.0 or x > 8000.0 or y < -4000.0 or y > 8000.0 or z < -200.0 or z > 2000.0 then
-        TriggerClientEvent('cross-factions:bildirim', source, 'Geçersiz konum!', 'error')
-        return
-    end
-
-    local fid, f, uye = OyuncuFactioniBul(citizenId)
-    if not fid or uye.yetki < 4 then
-        TriggerClientEvent('cross-factions:bildirim', source, 'Yetkin yetersiz! (Komutan veya üstü)', 'error')
-        return
-    end
-
-    -- Bu faction'ın özel bölgesi var mı?
-    local mevcutId = nil
-    for tId, t in pairs(TerritoryDurum) do
-        if t.factionOzel == fid then
-            mevcutId = tId
-            break
-        end
-    end
-
-    if mevcutId then
-        -- Mevcut bölgeyi güncelle
-        TerritoryDurum[mevcutId].x = x
-        TerritoryDurum[mevcutId].y = y
-        TerritoryDurum[mevcutId].z = z
-        MySQL.query.await('UPDATE cf_territoriler SET x=?, y=?, z=? WHERE id=?', { x, y, z, mevcutId })
-        HerkeseSyncGonder()
-        TriggerClientEvent('cross-factions:bildirim', source, f.isim .. ' bölgesi güncellendi!', 'success')
-        Log('Faction bölgesi güncellendi: ' .. fid .. ' → ' .. x .. ', ' .. y .. ', ' .. z)
-    else
-        -- Yeni bölge oluştur
-        local isim = f.isim .. ' Bölgesi'
-        local insertId = MySQL.insert.await(
-            'INSERT INTO cf_territoriler (isim, x, y, z, radius, level, faction_ozel) VALUES (?,?,?,?,?,?,?)',
-            { isim, x, y, z, 80.0, 1, fid }
         )
-        if not insertId then
-            TriggerClientEvent('cross-factions:bildirim', source, 'Bölge oluşturulurken hata!', 'error')
-            return
-        end
-        TerritoryDurum[insertId] = {
-            id              = insertId,
-            isim            = isim,
-            x               = x,
-            y               = y,
-            z               = z,
-            radius          = 80.0,
-            level           = 1,
-            ownerFactionId  = nil,
-            captureProgress = 0.0,
-            sonCapture      = nil,
-            factionOzel     = fid,
-        }
-        HerkeseSyncGonder()
-        TriggerClientEvent('cross-factions:bildirim', source, f.isim .. ' bölgesi yerleştirildi!', 'success')
-        Log('Faction bölgesi oluşturuldu: ' .. fid .. ' at ' .. x .. ', ' .. y .. ', ' .. z)
     end
 end)
 
--- ── Maaş ödeme (örn. her saat) ────────────────────────────────
+-- ─── Leaderboard: Haftalık/Aylık sıfırlama ───────────────────────────────────
+-- Her gece gece yarısı kontrol edilir
 CreateThread(function()
     while true do
-        Wait(3600 * 1000) -- Her saat
-        local tumOyuncular = QBCore.Functions.GetQBPlayers()
-        for _, p in pairs(tumOyuncular) do
-            local fid, f, uye = OyuncuFactioniBul(p.PlayerData.citizenid)
-            if fid and uye and uye.maas > 0 then
-                p.Functions.AddMoney('cash', uye.maas, 'faction-maas')
-                TriggerClientEvent('cross-factions:bildirim', p.PlayerData.source,
-                    'Faction maaşı alındı: $' .. uye.maas, 'success')
-            end
-        end
+        Wait(3600000)  -- Her saat kontrol
+        -- Basit günlük kontrol; gerçek sunucuda cron tabanlı yapılabilir
+        -- Bu implementasyonda DB'deki created_at ile haftalık/aylık filtre yapılır
+        -- Gerçek wipe için ayrı bir scheduled task oluşturulabilir
     end
+end)
+
+-- ─── Export: Dışarıya açılan fonksiyonlar ────────────────────────────────────
+exports('GetPlayerGang', function(source)
+    local cid = GetCitizenId(source)
+    if not cid then return nil end
+    local m = MemberCache[cid]
+    if not m then return nil end
+    return GangCache[m.gangId]
+end)
+
+exports('IsPlayerInGang', function(source, gangId)
+    local cid = GetCitizenId(source)
+    if not cid then return false end
+    local m = MemberCache[cid]
+    if not m then return false end
+    if gangId then return m.gangId == gangId end
+    return true
+end)
+
+exports('GetGangData', function(gangId)
+    return GangCache[gangId]
+end)
+
+-- ─── Admin Komutları ──────────────────────────────────────────────────────────
+QBCore.Commands.Add('cf_creategang', '[Admin] Gang oluştur', {
+    { name = 'name',   help = 'Gang adı' },
+    { name = 'tag',    help = 'Gang etiketi' },
+    { name = 'playerId', help = 'Lider oyuncu ID' },
+}, true, function(source, args)
+    if not IsAdmin(source) then
+        TriggerClientEvent('QBCore:Notify', source, T('no_permission'), 'error')
+        return
+    end
+    local name   = args[1]
+    local tag    = args[2]
+    local target = tonumber(args[3])
+    TriggerEvent('cross-factions:internal:adminCreateGang', source, name, tag, target)
+end, 'admin')
+
+QBCore.Commands.Add('cf_deletegang', '[Admin] Gangı sil', {
+    { name = 'gangId', help = 'Gang ID' },
+}, true, function(source, args)
+    if not IsAdmin(source) then
+        TriggerClientEvent('QBCore:Notify', source, T('no_permission'), 'error')
+        return
+    end
+    TriggerEvent('cross-factions:internal:adminDeleteGang', source, tonumber(args[1]))
+end, 'admin')
+
+QBCore.Commands.Add('cf_resetturf', '[Admin] Turf sıfırla', {
+    { name = 'turfId', help = 'Turf ID' },
+}, true, function(source, args)
+    if not IsAdmin(source) then
+        TriggerClientEvent('QBCore:Notify', source, T('no_permission'), 'error')
+        return
+    end
+    TriggerEvent('cross-factions:internal:adminResetTurf', source, tonumber(args[1]))
+end, 'admin')
+
+QBCore.Commands.Add('cf_setturf', '[Admin] Turf sahibini değiştir', {
+    { name = 'turfId', help = 'Turf ID' },
+    { name = 'gangId', help = 'Gang ID' },
+}, true, function(source, args)
+    if not IsAdmin(source) then
+        TriggerClientEvent('QBCore:Notify', source, T('no_permission'), 'error')
+        return
+    end
+    TriggerEvent('cross-factions:internal:adminSetTurfOwner', source, tonumber(args[1]), tonumber(args[2]))
+end, 'admin')
+
+QBCore.Commands.Add('cf_endwar', '[Admin] Savaşı bitir', {
+    { name = 'warId', help = 'War ID' },
+}, true, function(source, args)
+    if not IsAdmin(source) then
+        TriggerClientEvent('QBCore:Notify', source, T('no_permission'), 'error')
+        return
+    end
+    TriggerEvent('cross-factions:internal:adminEndWar', source, tonumber(args[1]))
+end, 'admin')
+
+QBCore.Commands.Add('cf_addrep', '[Admin] İtibar ekle/çıkar', {
+    { name = 'gangId', help = 'Gang ID' },
+    { name = 'amount', help = 'Miktar (negatif olabilir)' },
+}, true, function(source, args)
+    if not IsAdmin(source) then
+        TriggerClientEvent('QBCore:Notify', source, T('no_permission'), 'error')
+        return
+    end
+    TriggerEvent('cross-factions:internal:adminAddRep', source, tonumber(args[1]), tonumber(args[2]))
+end, 'admin')
+
+QBCore.Commands.Add('cf_clearspray', '[Admin] Spray temizle', {
+    { name = 'sprayId', help = 'Spray ID (0 = hepsini temizle)' },
+}, true, function(source, args)
+    if not IsAdmin(source) then
+        TriggerClientEvent('QBCore:Notify', source, T('no_permission'), 'error')
+        return
+    end
+    TriggerEvent('cross-factions:internal:adminClearSpray', source, tonumber(args[1]))
+end, 'admin')
+
+-- ─── Admin Event Handler'ları ─────────────────────────────────────────────────
+AddEventHandler('cross-factions:internal:adminResetTurf', function(adminSrc, turfId)
+    MySQL.update('UPDATE cf_turf_ownership SET owner_gang_id = NULL, cooldown_until = NULL WHERE turf_id = ?',
+        { turfId }, function()
+            if TurfCache[turfId] then
+                TurfCache[turfId].owner         = nil
+                TurfCache[turfId].cooldownUntil = 0
+            end
+            TriggerClientEvent('cross-factions:client:turfOwnerChanged', -1, turfId, nil)
+            local turfName = 'ID:' .. turfId
+            for _, t in ipairs(Config.Turfs) do
+                if t.id == turfId then turfName = t.name break end
+            end
+            TriggerClientEvent('QBCore:Notify', adminSrc, T('admin_turf_reset', turfName), 'success')
+            LogAdmin('Turf Sıfırlandı', ('Admin [%d] tarafından Turf #%d sıfırlandı.'):format(adminSrc, turfId))
+        end)
+end)
+
+AddEventHandler('cross-factions:internal:adminSetTurfOwner', function(adminSrc, turfId, gangId)
+    MySQL.update('INSERT INTO cf_turf_ownership (turf_id, owner_gang_id, captured_at) VALUES (?, ?, NOW()) ON DUPLICATE KEY UPDATE owner_gang_id = ?, captured_at = NOW()',
+        { turfId, gangId, gangId }, function()
+            if not TurfCache[turfId] then TurfCache[turfId] = {} end
+            TurfCache[turfId].owner = gangId
+            TriggerClientEvent('cross-factions:client:turfOwnerChanged', -1, turfId, gangId)
+            TriggerClientEvent('QBCore:Notify', adminSrc, T('admin_turf_owner_set', turfId, gangId), 'success')
+            LogAdmin('Turf Sahibi Değiştirildi', ('Admin [%d] Turf #%d sahibini Gang #%d yaptı.'):format(adminSrc, turfId, gangId))
+        end)
+end)
+
+AddEventHandler('cross-factions:internal:adminEndWar', function(adminSrc, warId)
+    TriggerEvent('cross-factions:internal:resolveWar', warId, nil) -- beraberlik
+    TriggerClientEvent('QBCore:Notify', adminSrc, T('admin_war_ended'), 'success')
+    LogAdmin('Savaş Sonlandırıldı', ('Admin [%d] War #%d savaşını sonlandırdı.'):format(adminSrc, warId))
+end)
+
+AddEventHandler('cross-factions:internal:adminAddRep', function(adminSrc, gangId, amount)
+    MySQL.update('UPDATE cf_gangs SET reputation = reputation + ? WHERE id = ?', { amount, gangId }, function()
+        if GangCache[gangId] then
+            GangCache[gangId].reputation = (GangCache[gangId].reputation or 0) + amount
+        end
+        TriggerClientEvent('QBCore:Notify', adminSrc, T('admin_rep_added', amount, gangId), 'success')
+        LogAdmin('İtibar Eklendi', ('Admin [%d] Gang #%d\'ye %d itibar ekledi.'):format(adminSrc, gangId, amount))
+    end)
+end)
+
+AddEventHandler('cross-factions:internal:adminClearSpray', function(adminSrc, sprayId)
+    if sprayId == 0 then
+        MySQL.update('DELETE FROM cf_gang_sprays', {}, function()
+            SprayCache = {}
+            TriggerClientEvent('cross-factions:client:clearAllSprays', -1)
+        end)
+    else
+        MySQL.update('DELETE FROM cf_gang_sprays WHERE id = ?', { sprayId }, function()
+            SprayCache[sprayId] = nil
+            TriggerClientEvent('cross-factions:client:removeSpray', -1, sprayId)
+        end)
+    end
+    TriggerClientEvent('QBCore:Notify', adminSrc, T('admin_spray_cleared'), 'success')
+    LogAdmin('Spray Temizlendi', ('Admin [%d] spray temizledi (id=%d).'):format(adminSrc, sprayId))
 end)

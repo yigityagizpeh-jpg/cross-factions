@@ -1,449 +1,206 @@
--- ============================================================
---  cross-factions  |  İstemci Tarafı (client/main.lua)
--- ============================================================
+--[[
+    client/main.lua — İstemci Çekirdeği
+    QBCore başlatma, kill tracking, temel event handler'lar,
+    ox_target entegrasyonu ve ortak yardımcı fonksiyonlar.
+--]]
 
 local QBCore = exports['qb-core']:GetCoreObject()
 
--- ── Yerel durum ──────────────────────────────────────────────
-local TabletAcik        = false
-local SyncVeri          = {}
-local TerritoryBlipleri = {}   -- [tId] = blip handle
-local OyuncuBlipleri    = {}
-local CaptureBarlar     = {}   -- [tId] = { thread, aktif }
-local AFKKontrol        = { son_pos = nil, son_zaman = 0, afk = false }
-local BenimFactionId    = nil
-local BenimCitizenId    = nil
+-- ─── Yerel Durum ──────────────────────────────────────────────────────────────
+local MyGangData    = nil    -- Oyuncunun gang verisi (callback'ten gelir)
+local MyRankIndex   = 0
+local MyPerms       = {}
+local ActiveWarData = nil    -- Aktif savaş varsa skor bilgisi
 
--- ── Yardımcı ─────────────────────────────────────────────────
-local function RenkHextenRGBA(hex)
-    hex = hex:gsub('#', '')
-    local r = tonumber(hex:sub(1,2), 16) or 255
-    local g = tonumber(hex:sub(3,4), 16) or 255
-    local b = tonumber(hex:sub(5,6), 16) or 255
-    return r, g, b, 200
-end
-
-local function BlipRenkInd(renk)
-    return Config.BlipRenkleri[renk] or 0
-end
-
--- ── Blip yönetimi ────────────────────────────────────────────
-local function TumBlipleriTemizle()
-    for _, blip in pairs(TerritoryBlipleri) do
-        if DoesBlipExist(blip) then RemoveBlip(blip) end
-    end
-    TerritoryBlipleri = {}
-end
-
-local function TerritoryBlipleriniGuncelle()
-    TumBlipleriTemizle()
-    for tId, t in pairs(SyncVeri.territoriler or {}) do
-        local blip = AddBlipForCoord(t.x, t.y, t.z)
-        SetBlipSprite(blip, 830)
-        SetBlipScale(blip, 0.8)
-        SetBlipDisplay(blip, 4)
-        SetBlipAsShortRange(blip, true)
-
-        if t.ownerFactionId and SyncVeri.factionlar and SyncVeri.factionlar[t.ownerFactionId] then
-            local f = SyncVeri.factionlar[t.ownerFactionId]
-            SetBlipColour(blip, BlipRenkInd(f.renk))
-            BeginTextCommandSetBlipName('STRING')
-            AddTextComponentString(t.isim .. ' (' .. f.isim .. ')')
-            EndTextCommandSetBlipName(blip)
+-- ─── Yardımcı: Gang verisini yenile ──────────────────────────────────────────
+function RefreshMyGang(cb)
+    QBCore.Functions.TriggerCallback('cross-factions:cb:getMyGang', function(data)
+        if data then
+            MyGangData  = data.gang
+            MyRankIndex = data.myRank
+            MyPerms     = data.perms
         else
-            SetBlipColour(blip, 4)
-            BeginTextCommandSetBlipName('STRING')
-            AddTextComponentString(t.isim .. ' (Sahipsiz)')
-            EndTextCommandSetBlipName(blip)
+            MyGangData  = nil
+            MyRankIndex = 0
+            MyPerms     = {}
         end
+        if cb then cb(data) end
+    end)
+end
 
-        TerritoryBlipleri[tId] = blip
+-- ─── Yardımcı: Debug çıktı ────────────────────────────────────────────────────
+function DebugPrint(msg)
+    if Config.Debug then
+        print('[cross-factions CLIENT] ' .. tostring(msg))
     end
 end
 
--- ── Sync alındı ──────────────────────────────────────────────
-RegisterNetEvent('cross-factions:sync', function(veri)
-    SyncVeri = veri
-    TerritoryBlipleriniGuncelle()
-    -- UI açıksa güncelle
-    if TabletAcik then
-        SendNUIMessage({ type = 'syncVeri', veri = veri })
+-- ─── Yardımcı: ox_lib notify ──────────────────────────────────────────────────
+function Notify(msg, notifyType, duration)
+    lib.notify({
+        title       = 'Cross-Factions',
+        description = msg,
+        type        = notifyType or 'inform',
+        duration    = duration or Config.NotifyDuration,
+    })
+end
+
+-- ─── Yardımcı: Gang renk string'i ────────────────────────────────────────────
+function GetGangColor()
+    if MyGangData and MyGangData.color then
+        return MyGangData.color
     end
+    return '#FFFFFF'
+end
+
+-- ─── Yükleme: Gang verisini al ────────────────────────────────────────────────
+AddEventHandler('QBCore:Client:OnPlayerLoaded', function()
+    Wait(2000)  -- Sunucu tarafının hazır olması için bekle
+    RefreshMyGang()
 end)
 
--- ── Tablet verileri ──────────────────────────────────────────
-RegisterNetEvent('cross-factions:tabletVeri', function(veri)
-    SyncVeri = veri
-    BenimFactionId = veri.benimFactionId
-    BenimCitizenId = veri.benimCitizenId
-    SendNUIMessage({ type = 'tabletVeri', veri = veri })
+AddEventHandler('QBCore:Client:OnPlayerUnload', function()
+    MyGangData  = nil
+    MyRankIndex = 0
+    MyPerms     = {}
 end)
 
--- ── Bildirim ─────────────────────────────────────────────────
-RegisterNetEvent('cross-factions:bildirim', function(mesaj, tip)
-    QBCore.Functions.Notify(mesaj, tip or 'primary', 5000)
-end)
-
--- ── Davet ────────────────────────────────────────────────────
-RegisterNetEvent('cross-factions:davetAl', function(factionId, factionIsim, gonderen)
-    QBCore.Functions.Notify('Davet: ' .. factionIsim .. ' factionına katılmak ister misin? [/davetKabul ' .. factionId .. ']', 'primary', 15000)
-end)
-
--- ── Territory capture başladı ────────────────────────────────
-RegisterNetEvent('cross-factions:captureBasladi', function(tId, factionId)
-    local t = (SyncVeri.territoriler or {})[tId]
-    if not t then return end
-    local fIsim = (SyncVeri.factionlar and SyncVeri.factionlar[factionId] and SyncVeri.factionlar[factionId].isim) or '?'
-    QBCore.Functions.Notify(t.isim .. ' capture başladı (' .. fIsim .. ')', 'primary', 4000)
-end)
-
--- ── Territory alındı ─────────────────────────────────────────
-RegisterNetEvent('cross-factions:territoryAlindi', function(tId, factionId)
-    local t = (SyncVeri.territoriler or {})[tId]
-    if not t then return end
-    local fIsim = (SyncVeri.factionlar and SyncVeri.factionlar[factionId] and SyncVeri.factionlar[factionId].isim) or '?'
-    QBCore.Functions.Notify(t.isim .. ' bölgesi ' .. fIsim .. ' tarafından ele geçirildi!', 'success', 6000)
-    TerritoryBlipleriniGuncelle()
-end)
-
--- ── Savaş bitti ──────────────────────────────────────────────
-RegisterNetEvent('cross-factions:savasBitti', function(savasId, kazananId, sebep)
-    local kazananIsim = 'Berabere'
-    if kazananId and SyncVeri.factionlar and SyncVeri.factionlar[kazananId] then
-        kazananIsim = SyncVeri.factionlar[kazananId].isim
-    end
-    QBCore.Functions.Notify('Savaş bitti! Kazanan: ' .. kazananIsim .. ' (' .. (sebep or '?') .. ')', 'success', 8000)
-end)
-
--- ── Savaş güncelle ───────────────────────────────────────────
-RegisterNetEvent('cross-factions:savasGuncelle', function(savasId, savasVeri)
-    if SyncVeri.aktifSavaslar then
-        SyncVeri.aktifSavaslar[savasId] = savasVeri
-    end
-    if TabletAcik then
-        SendNUIMessage({ type = 'savasGuncelle', savasId = savasId, veri = savasVeri })
-    end
-end)
-
--- ── Capture bar HUD ──────────────────────────────────────────
+-- ─── Kill Tracking: Ölüm algılama ─────────────────────────────────────────────
+-- Oyuncu öldüğünde kimin öldürdüğünü sunucuya bildir
+-- ─── Kill Tracking: Öldürme algılama ─────────────────────────────────────────
+-- Yakındaki oyuncuların ölümünü izleyerek kimi öldürdüğümüzü tespit eder.
+-- Bu yaklaşım killer client tarafından tetiklenir; sunucunun source parametresi
+-- killer'ın server ID'si olur — daha güvenli ve exploit'e karşı dayanıklı.
 CreateThread(function()
+    -- Kısa sürede aynı kurbanı tekrar saymamak için local tracker
+    local recentKills = {}  -- victimServerId → timestamp
+
     while true do
-        Wait(0)
-        local myCoords = GetEntityCoords(PlayerPedId())
+        Wait(500)
+        local myPed = PlayerPedId()
 
-        for tId, t in pairs(SyncVeri.territoriler or {}) do
-            local dist = #(vector3(t.x, t.y, t.z) - myCoords)
-            if dist <= t.radius + 5.0 then
-                -- Yüzde göster
-                local progress = t.captureProgress or 0
-                local owner    = t.ownerFactionId
-                local ownerIsim = 'Sahipsiz'
-                local r, g, b = 255, 255, 255
-                if owner and SyncVeri.factionlar and SyncVeri.factionlar[owner] then
-                    ownerIsim = SyncVeri.factionlar[owner].isim
-                    r, g, b   = RenkHextenRGBA(SyncVeri.factionlar[owner].renk)
-                end
-
-                -- Başlık
-                local yazi = t.isim .. ' | ' .. ownerIsim .. ' | %' .. math.floor(progress)
-                SetTextFont(4)
-                SetTextProportional(1)
-                SetTextScale(0.0, 0.45)
-                SetTextColour(r, g, b, 255)
-                SetTextOutline()
-                BeginTextCommandDisplayText('STRING')
-                AddTextComponentSubstringPlayerName(yazi)
-                EndTextCommandDisplayText(0.5 - GetTextScaleWithCurrentFont(0.45, 4) * #yazi * 0.02, 0.94)
-
-                -- İlerleme çubuğu
-                local barW  = 0.2
-                local barH  = 0.012
-                local barX  = 0.5 - barW / 2
-                local barY  = 0.96
-                local fill  = (progress / 100) * barW
-
-                DrawRect(barX + barW / 2, barY, barW + 0.002, barH + 0.003, 0, 0, 0, 180)
-                DrawRect(barX + fill / 2, barY, fill, barH, r, g, b, 220)
-            end
-        end
-    end
-end)
-
--- ── AFK kontrol ──────────────────────────────────────────────
-CreateThread(function()
-    while true do
-        Wait(5000)
-        local ped    = PlayerPedId()
-        local coords = GetEntityCoords(ped)
-
-        if AFKKontrol.son_pos then
-            local dist = #(coords - AFKKontrol.son_pos)
-            if dist < Config.SavasAFKMesafe then
-                if (GetGameTimer() / 1000 - AFKKontrol.son_zaman) >= Config.SavasAFKSure then
-                    AFKKontrol.afk = true
-                end
-            else
-                AFKKontrol.afk      = false
-                AFKKontrol.son_zaman = GetGameTimer() / 1000
-            end
+        if IsEntityDead(myPed) then
+            Wait(3000)  -- Ölüyken kontrol etme
         else
-            AFKKontrol.son_zaman = GetGameTimer() / 1000
-        end
-        AFKKontrol.son_pos = coords
-
-        -- AFK ise savaştan çıkar
-        if AFKKontrol.afk then
-            -- Sadece aktif savaş varken uyar
-            local savasVar = false
-            if BenimFactionId then
-                for _, s in pairs(SyncVeri.aktifSavaslar or {}) do
-                    if s.saldiranId == BenimFactionId or s.savunucuId == BenimFactionId then
-                        savasVar = true
-                        break
+            local now = GetGameTimer()
+            for _, playerId in ipairs(GetActivePlayers()) do
+                if playerId ~= PlayerId() then
+                    local victimPed = GetPlayerPed(playerId)
+                    if victimPed and victimPed ~= 0 and IsEntityDead(victimPed) then
+                        -- Öldüren entity bu client'ın ped'i mi?
+                        local killerEnt = GetPedSourceOfDeath(victimPed)
+                        if killerEnt == myPed then
+                            local victimServerId = GetPlayerServerId(playerId)
+                            if victimServerId and victimServerId ~= 0 then
+                                -- 10 saniye içinde aynı kurbanı tekrar sayma (client-side guard)
+                                if not recentKills[victimServerId] or (now - recentKills[victimServerId]) > 10000 then
+                                    recentKills[victimServerId] = now
+                                    TriggerServerEvent('cross-factions:server:registerKill', victimServerId)
+                                end
+                            end
+                        end
                     end
                 end
             end
-            if savasVar then
-                QBCore.Functions.Notify('AFK olduğunuz için savaştan sayılmıyorsunuz!', 'error', 5000)
-            end
         end
     end
 end)
 
--- ── Komutlar ─────────────────────────────────────────────────
+-- ─── ox_target: Stash / Armory Hedefleri ─────────────────────────────────────
+-- Gerçek sunucuda hedef nesneleri koordinatlarla veya obje hash ile tanımlanır.
+-- Bu örnek, gang stash ve armory erişimini basit obje etkileşimi ile gösterir.
+-- Gerçek harita entegrasyonu için ox_target zone veya poly zone kullanılmalı.
 
--- Tablet aç/kapat
-RegisterCommand('tablet', function()
-    if not TabletAcik then
-        TabletAcik = true
-        SetNuiFocus(true, true)
-        SendNUIMessage({ type = 'tablet', durum = 'ac' })
-        TriggerServerEvent('cross-factions:tabletAc')
-    else
-        TabletAcik = false
-        SetNuiFocus(false, false)
-        SendNUIMessage({ type = 'tablet', durum = 'kapat' })
-    end
+-- Gang menüsünü açmak için komut
+RegisterCommand('gangmenu', function()
+    TriggerEvent('cross-factions:client:openBossMenu')
 end, false)
 
-RegisterKeyMapping('tablet', 'Faction Tableti Aç/Kapat', 'keyboard', 'F6')
-
--- Davet kabul et
-RegisterCommand('davetKabul', function(source, args)
-    local factionId = tonumber(args[1])
-    if not factionId then
-        QBCore.Functions.Notify('Kullanım: /davetKabul [faction_id]', 'error')
-        return
-    end
-    TriggerServerEvent('cross-factions:davetKabul', factionId)
+-- Leaderboard komutu
+RegisterCommand('gangleaderboard', function()
+    TriggerEvent('cross-factions:client:openLeaderboard')
 end, false)
 
--- ── NUI Callbacks ────────────────────────────────────────────
+-- Gang bilgisi komutu
+RegisterCommand('ganginfo', function()
+    TriggerEvent('cross-factions:client:openGangInfo')
+end, false)
 
-RegisterNUICallback('tabletKapat', function(_, cb)
-    TabletAcik = false
-    SetNuiFocus(false, false)
-    cb('ok')
-end)
-
-RegisterNUICallback('factionOlustur', function(veri, cb)
-    TriggerServerEvent('cross-factions:factionOlustur', veri)
-    cb('ok')
-end)
-
-RegisterNUICallback('factionSil', function(_, cb)
-    TriggerServerEvent('cross-factions:factionSil')
-    cb('ok')
-end)
-
-RegisterNUICallback('factionAyril', function(_, cb)
-    TriggerServerEvent('cross-factions:factionAyril')
-    cb('ok')
-end)
-
-RegisterNUICallback('factionGuncelle', function(veri, cb)
-    TriggerServerEvent('cross-factions:factionGuncelle', veri)
-    cb('ok')
-end)
-
-RegisterNUICallback('uyeDavetEt', function(veri, cb)
-    TriggerServerEvent('cross-factions:uyeDavetEt', veri.citizenId)
-    cb('ok')
-end)
-
-RegisterNUICallback('uyeKov', function(veri, cb)
-    TriggerServerEvent('cross-factions:uyeKov', veri.citizenId)
-    cb('ok')
-end)
-
-RegisterNUICallback('yetkiAta', function(veri, cb)
-    TriggerServerEvent('cross-factions:yetkiAta', veri.citizenId, veri.yetki)
-    cb('ok')
-end)
-
-RegisterNUICallback('maasGuncelle', function(veri, cb)
-    TriggerServerEvent('cross-factions:maasGuncelle', veri.citizenId, veri.maas)
-    cb('ok')
-end)
-
-RegisterNUICallback('savasIlanEt', function(veri, cb)
-    TriggerServerEvent('cross-factions:savasIlanEt', veri.hedefFactionId, veri.territoryId)
-    cb('ok')
-end)
-
-RegisterNUICallback('captureBaslat', function(veri, cb)
-    TriggerServerEvent('cross-factions:captureBaslat', veri.tId)
-    cb('ok')
-end)
-
-RegisterNUICallback('captureDurdur', function(veri, cb)
-    TriggerServerEvent('cross-factions:captureDurdur', veri.tId)
-    cb('ok')
-end)
-
-RegisterNUICallback('gorevAl', function(veri, cb)
-    TriggerServerEvent('cross-factions:gorevAl', veri.gorevId)
-    cb('ok')
-end)
-
-RegisterNUICallback('gorevTamamla', function(veri, cb)
-    TriggerServerEvent('cross-factions:gorevTamamla', veri.gorevId)
-    cb('ok')
-end)
-
-RegisterNUICallback('syncIste', function(_, cb)
-    TriggerServerEvent('cross-factions:syncIste')
-    cb('ok')
-end)
-
--- ── Territory yerleştirme modu ────────────────────────────────
-local YerlestirmeModu = false
-
-RegisterNUICallback('territoryYerlestirMod', function(_, cb)
-    TabletAcik = false
-    SetNuiFocus(false, false)
-    SendNUIMessage({ type = 'tablet', durum = 'kapat' })
-    YerlestirmeModu = true
-    cb('ok')
-
-    CreateThread(function()
-        QBCore.Functions.Notify(
-            'Bölgeyi yerleştirmek istediğiniz konuma gidin ve ~g~E~s~ tuşuna basın. ~r~ESC~s~ ile iptal.',
-            'primary', 8000
-        )
-        while YerlestirmeModu do
-            Wait(0)
-            local ped    = PlayerPedId()
-            local coords = GetEntityCoords(ped)
-
-            -- Alan göstergesi (80m yarıçap)
-            DrawMarker(
-                1,
-                coords.x, coords.y, coords.z - 0.98,
-                0.0, 0.0, 0.0,
-                0.0, 0.0, 0.0,
-                80.0, 80.0, 0.5,
-                255, 165, 0, 80,
-                false, true, 2, false, nil, nil, false
-            )
-
-            -- Ekran yönlendirme metni
-            SetTextFont(4)
-            SetTextProportional(1)
-            SetTextScale(0.0, 0.4)
-            SetTextColour(255, 165, 0, 255)
-            SetTextOutline()
-            BeginTextCommandDisplayText('STRING')
-            AddTextComponentSubstringPlayerName('~INPUT_CONTEXT~ Bölgeyi Buraya Koy  |  ESC: İptal')
-            EndTextCommandDisplayText(0.5, 0.91)
-
-            if IsControlJustReleased(0, 38) then   -- E tuşu
-                YerlestirmeModu = false
-                TriggerServerEvent('cross-factions:territoryYerlestir', coords.x, coords.y, coords.z)
-                return
-            end
-
-            if IsControlJustReleased(0, 200) then  -- ESC
-                YerlestirmeModu = false
-                QBCore.Functions.Notify('Bölge yerleştirme iptal edildi.', 'error', 3000)
-                return
-            end
+-- ─── Sunucudan gelen genel event'ler ──────────────────────────────────────────
+RegisterNetEvent('cross-factions:client:gangInvite', function(gangId, gangName, senderSrc)
+    -- ox_lib alert dialog ile davet
+    lib.alertDialog({
+        header  = '🏴 Gang Daveti',
+        content = ('**%s** gangından davet aldınız!\nKatılmak ister misiniz?'):format(gangName),
+        centered = true,
+        cancel  = true,
+    }, function(confirm)
+        if confirm == 'confirm' then
+            TriggerServerEvent('cross-factions:server:acceptInvite', gangId)
         end
     end)
 end)
 
--- ── ESC tuşu tablet kapatsın ─────────────────────────────────
-CreateThread(function()
-    while true do
-        Wait(0)
-        if TabletAcik and IsControlJustReleased(0, 200) then -- ESC
-            TabletAcik = false
-            SetNuiFocus(false, false)
-            SendNUIMessage({ type = 'tablet', durum = 'kapat' })
-        end
+RegisterNetEvent('cross-factions:client:allianceRequest', function(fromGangId, fromGangName)
+    lib.alertDialog({
+        header  = '🤝 İttifak Teklifi',
+        content = ('**%s** gangı size ittifak teklif ediyor!\nKabul etmek ister misiniz?'):format(fromGangName),
+        centered = true,
+        cancel  = true,
+    }, function(confirm)
+        TriggerServerEvent('cross-factions:server:respondAlliance', fromGangId, confirm == 'confirm')
+    end)
+end)
+
+RegisterNetEvent('cross-factions:client:warRequest', function(fromGangId, fromGangName)
+    lib.alertDialog({
+        header  = '⚔️ Savaş İlanı',
+        content = ('**%s** gangı size **SAVAŞ** ilan etti!\nKabul etmek ister misiniz?'):format(fromGangName),
+        centered = true,
+        cancel  = true,
+    }, function(confirm)
+        TriggerServerEvent('cross-factions:server:respondWar', fromGangId, confirm == 'confirm')
+    end)
+end)
+
+RegisterNetEvent('cross-factions:client:warStarted', function(warId, enemyGangId)
+    ActiveWarData = { warId = warId, enemyGangId = enemyGangId, myKills = 0, theirKills = 0 }
+    Notify('⚔️ Savaş başladı!', 'error', 8000)
+    -- HUD güncelle
+    TriggerEvent('cross-factions:client:updateWarHUD')
+end)
+
+RegisterNetEvent('cross-factions:client:warScoreUpdate', function(warId, g1Kills, g2Kills)
+    if ActiveWarData and ActiveWarData.warId == warId then
+        -- Hangi gang 1 hangisi 2 olduğunu bilmemiz gerekiyor; bu bilgiyi cache'de tutabiliriz
+        -- Basitlik adına sadece ham skorları gösterelim
+        ActiveWarData.g1Kills = g1Kills
+        ActiveWarData.g2Kills = g2Kills
+        TriggerEvent('cross-factions:client:updateWarHUD')
     end
 end)
 
--- ── Faction Yönetim Yeri – blip ──────────────────────────────
-local function YonetimBlipOlustur()
-    local blip = AddBlipForCoord(Config.YonetimYeri.x, Config.YonetimYeri.y, Config.YonetimYeri.z)
-    SetBlipSprite(blip, 478)          -- tablet/management icon
-    SetBlipScale(blip, 0.9)
-    SetBlipColour(blip, 3)            -- mavi
-    SetBlipAsShortRange(blip, true)
-    BeginTextCommandSetBlipName('STRING')
-    AddTextComponentString('Faction Yönetim Merkezi')
-    EndTextCommandSetBlipName(blip)
-end
-
-CreateThread(function()
-    YonetimBlipOlustur()
-
-    local merkezVec = vector3(Config.YonetimYeri.x, Config.YonetimYeri.y, Config.YonetimYeri.z)
-    local r         = Config.YonetimYeri.radius
-
-    while true do
-        local ped    = PlayerPedId()
-        local coords = GetEntityCoords(ped)
-        local dist   = #(coords - merkezVec)
-
-        if dist <= r + 20.0 then
-            -- Yön işareti
-            DrawMarker(
-                1,                                      -- silindir
-                merkezVec.x, merkezVec.y, merkezVec.z - 0.95,
-                0.0, 0.0, 0.0,
-                0.0, 0.0, 0.0,
-                r * 0.6, r * 0.6, 0.5,
-                52, 152, 219, 80,                       -- mavi, yarı şeffaf
-                false, true, 2, false, nil, nil, false
-            )
-
-            if dist <= r then
-                -- Ekranda ipucu metni
-                SetTextFont(4)
-                SetTextProportional(1)
-                SetTextScale(0.0, 0.4)
-                SetTextColour(52, 152, 219, 255)
-                SetTextOutline()
-                BeginTextCommandDisplayText('STRING')
-                AddTextComponentSubstringPlayerName('~INPUT_CONTEXT~ Faction Tabletini Aç')
-                EndTextCommandDisplayText(0.5, 0.91)
-
-                -- E tuşu (38) ile tablet aç
-                if not YerlestirmeModu and IsControlJustReleased(0, 38) then
-                    if not TabletAcik then
-                        TabletAcik = true
-                        SetNuiFocus(true, true)
-                        SendNUIMessage({ type = 'tablet', durum = 'ac' })
-                        TriggerServerEvent('cross-factions:tabletAc')
-                    end
-                end
-            end
-
-            Wait(0)
-        else
-            Wait(1000)
-        end
+RegisterNetEvent('cross-factions:client:warEnded', function(warId)
+    if ActiveWarData and ActiveWarData.warId == warId then
+        ActiveWarData = nil
+        TriggerEvent('cross-factions:client:updateWarHUD')
     end
+end)
+
+-- ─── Gang refresh tetikleyici ─────────────────────────────────────────────────
+RegisterNetEvent('cross-factions:client:refreshGangData', function()
+    RefreshMyGang()
+end)
+
+-- ─── Exports (diğer clientların kullanımı için) ───────────────────────────────
+exports('GetMyGangData', function()
+    return MyGangData
+end)
+
+exports('GetMyRankIndex', function()
+    return MyRankIndex
+end)
+
+exports('HasPerm', function(perm)
+    return MyPerms[perm] == true
 end)
