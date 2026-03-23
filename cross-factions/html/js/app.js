@@ -58,16 +58,62 @@ function tabletKapat() {
 }
 
 function nuiPost(event, data = {}) {
-  return fetch(`https://${GetParentResourceName()}/${event}`, {
+  const resName = (typeof GetParentResourceName === 'function')
+    ? GetParentResourceName()
+    : 'cross-factions';
+  return fetch(`https://${resName}/${event}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
   });
 }
 
-// FiveM resource adı
-function GetParentResourceName() {
-  return window.GetParentResourceName ? window.GetParentResourceName() : 'cross-factions';
+// ── Özel bildirim ve dialog (alert/confirm/prompt yerine) ─────
+function showAlert(msg, type) {
+  const el = document.getElementById('cfToast');
+  if (!el) return;
+  el.textContent = msg;
+  el.className = 'cf-toast cf-toast-' + (type || 'error') + ' show';
+  clearTimeout(el._dismissTimer);
+  el._dismissTimer = setTimeout(() => el.classList.remove('show'), 3500);
+}
+
+function showConfirm(msg, onEvet) {
+  const modal = document.getElementById('cfModal');
+  if (!modal) { if (window.confirm(msg)) onEvet(); return; }
+  document.getElementById('cfModalMsg').textContent = msg;
+  modal.classList.remove('hidden');
+  const okBtn     = document.getElementById('cfModalOk');
+  const cancelBtn = document.getElementById('cfModalCancel');
+  const newOk     = okBtn.cloneNode(true);
+  const newCancel = cancelBtn.cloneNode(true);
+  okBtn.parentNode.replaceChild(newOk, okBtn);
+  cancelBtn.parentNode.replaceChild(newCancel, cancelBtn);
+  newOk.addEventListener('click', () => { modal.classList.add('hidden'); onEvet(); });
+  newCancel.addEventListener('click', () => modal.classList.add('hidden'));
+}
+
+function showPrompt(msg, defaultVal, onOk) {
+  const modal = document.getElementById('cfPromptModal');
+  if (!modal) { const r = window.prompt(msg, defaultVal); if (r !== null) onOk(r); return; }
+  document.getElementById('cfPromptMsg').textContent = msg;
+  const input = document.getElementById('cfPromptInput');
+  input.value = (defaultVal !== undefined && defaultVal !== null) ? String(defaultVal) : '';
+  modal.classList.remove('hidden');
+  setTimeout(() => input.focus(), 50);
+  const okBtn     = document.getElementById('cfPromptOk');
+  const cancelBtn = document.getElementById('cfPromptCancel');
+  const newOk     = okBtn.cloneNode(true);
+  const newCancel = cancelBtn.cloneNode(true);
+  okBtn.parentNode.replaceChild(newOk, okBtn);
+  cancelBtn.parentNode.replaceChild(newCancel, cancelBtn);
+  const doOk = () => { modal.classList.add('hidden'); onOk(input.value); };
+  newOk.addEventListener('click', doOk);
+  newCancel.addEventListener('click', () => modal.classList.add('hidden'));
+  input.onkeydown = (e) => {
+    if (e.key === 'Enter') doOk();
+    if (e.key === 'Escape') modal.classList.add('hidden');
+  };
 }
 
 // ── Sekme değiştirme ────────────────────────────────────────
@@ -265,7 +311,7 @@ function bindFactionOlustur() {
     const isim    = document.getElementById('yeniFactionIsim').value.trim();
     const renk    = document.getElementById('seciliRenk').value;
     const logoUrl = document.getElementById('yeniFactionLogo').value.trim();
-    if (!isim || !renk) { alert('İsim ve renk zorunludur!'); return; }
+    if (!isim || !renk) { showAlert('İsim ve renk zorunludur!'); return; }
     nuiPost('factionOlustur', { isim, renk, logo_url: logoUrl });
   });
 }
@@ -275,18 +321,14 @@ function bindFactionPanelEvents(f, benimYetki) {
   const ayrilBtn = document.getElementById('factionAyrilBtn');
   if (ayrilBtn) {
     ayrilBtn.onclick = () => {
-      if (confirm('Faction\'dan ayrılmak istediğinize emin misiniz?')) {
-        nuiPost('factionAyril');
-      }
+      showConfirm('Faction\'dan ayrılmak istediğinize emin misiniz?', () => nuiPost('factionAyril'));
     };
   }
   // Sil
   const silBtn = document.getElementById('factionSilBtn');
   if (silBtn) {
     silBtn.onclick = () => {
-      if (confirm('Faction\'ı silmek istediğinize emin misiniz? Bu işlem geri alınamaz!')) {
-        nuiPost('factionSil');
-      }
+      showConfirm('Faction\'ı silmek istediğinize emin misiniz? Bu işlem geri alınamaz!', () => nuiPost('factionSil'));
     };
   }
   // Güncelle
@@ -331,27 +373,25 @@ function bindFactionPanelEvents(f, benimYetki) {
 
 // Kov
 window.uyeKov = function(citizenId) {
-  if (confirm(citizenId + ' adlı üyeyi kovmak istediğinize emin misiniz?')) {
-    nuiPost('uyeKov', { citizenId });
-  }
+  showConfirm(citizenId + ' adlı üyeyi kovmak istediğinize emin misiniz?', () => nuiPost('uyeKov', { citizenId }));
 };
 
 // Yetki ata
 window.yetkiAta = function(citizenId, mevcutYetki) {
-  const yeniYetki = prompt('Yeni yetki seviyesi (1-5, mevcut: ' + mevcutYetki + '):', mevcutYetki);
-  if (yeniYetki === null) return;
-  const y = parseInt(yeniYetki);
-  if (isNaN(y) || y < 1 || y > 5) { alert('Geçersiz yetki!'); return; }
-  nuiPost('yetkiAta', { citizenId, yetki: y });
+  showPrompt('Yeni yetki seviyesi (1-5, mevcut: ' + mevcutYetki + '):', mevcutYetki, (yeniYetki) => {
+    const y = parseInt(yeniYetki);
+    if (isNaN(y) || y < 1 || y > 5) { showAlert('Geçersiz yetki! (1-5 arası olmalıdır)'); return; }
+    nuiPost('yetkiAta', { citizenId, yetki: y });
+  });
 };
 
 // Maaş güncelle
 window.maasGuncelle = function(citizenId, mevcutMaas) {
-  const yeni = prompt('Yeni maaş ($, mevcut: ' + mevcutMaas + '):', mevcutMaas);
-  if (yeni === null) return;
-  const m = parseInt(yeni);
-  if (isNaN(m) || m < 0) { alert('Geçersiz miktar!'); return; }
-  nuiPost('maasGuncelle', { citizenId, maas: m });
+  showPrompt('Yeni maaş ($, mevcut: ' + mevcutMaas + '):', mevcutMaas, (yeni) => {
+    const m = parseInt(yeni);
+    if (isNaN(m) || m < 0) { showAlert('Geçersiz miktar! (0 veya üzeri olmalıdır)'); return; }
+    nuiPost('maasGuncelle', { citizenId, maas: m });
+  });
 };
 
 // ───────────────────────────────────────────────────────────
@@ -397,6 +437,7 @@ function renderTerritoriler() {
 }
 
 window.captureBaslat = function(tId) {
+  if (!benimFactionId) { showAlert('Bir faction üyesi değilsiniz!'); return; }
   nuiPost('captureBaslat', { tId });
 };
 
@@ -437,6 +478,20 @@ function renderSavaslar() {
     }
   }
 
+  // Savaş ilan formu görünürlüğü
+  const ilanFormuEl = document.getElementById('savasIlanFormu');
+  const ilanUyariEl = document.getElementById('savasIlanUyarisi');
+  if (!benimFactionId) {
+    if (ilanFormuEl) ilanFormuEl.classList.add('hidden');
+    if (ilanUyariEl) {
+      ilanUyariEl.classList.remove('hidden');
+      ilanUyariEl.innerHTML = '<p style="color:#7a8fa6;font-size:12px;margin-top:8px">⚠ Savaş ilan edebilmek için bir faction\'a üye olmanız gerekmektedir.</p>';
+    }
+    return;
+  }
+  if (ilanFormuEl) ilanFormuEl.classList.remove('hidden');
+  if (ilanUyariEl) ilanUyariEl.classList.add('hidden');
+
   // Savaş ilan formu – dropdown doldur
   if (hedefSel) {
     const mevcutHedef = hedefSel.value;
@@ -471,13 +526,15 @@ function renderSavaslar() {
   if (ilanBtn && !ilanBtn._bound) {
     ilanBtn._bound = true;
     ilanBtn.addEventListener('click', () => {
+      const currentFactionlar = veri.factionlar || {};
       const hedef = document.getElementById('savasHedefFaction').value;
       const ter   = document.getElementById('savasTerritory').value || null;
-      if (!hedef) { alert('Hedef faction seçiniz!'); return; }
-      if (!benimFactionId) { alert('Bir faction üyesi değilsiniz!'); return; }
-      if (confirm(factionlar[hedef]?.isim + ' factionına savaş ilan etmek istediğinize emin misiniz?')) {
-        nuiPost('savasIlanEt', { hedefFactionId: parseInt(hedef), territoryId: ter ? parseInt(ter) : null });
-      }
+      if (!benimFactionId) { showAlert('Bir faction üyesi değilsiniz!'); return; }
+      if (!hedef) { showAlert('Hedef faction seçiniz!', 'warning'); return; }
+      showConfirm(
+        (currentFactionlar[hedef]?.isim || 'Hedef') + ' factionına savaş ilan etmek istediğinize emin misiniz?',
+        () => nuiPost('savasIlanEt', { hedefFactionId: parseInt(hedef), territoryId: ter ? parseInt(ter) : null })
+      );
     });
   }
 }
@@ -571,9 +628,7 @@ window.gorevAl = function(gorevId) {
 };
 
 window.gorevTamamla = function(gorevId) {
-  if (confirm('Görevi tamamlandı olarak işaretlemek istiyor musunuz?')) {
-    nuiPost('gorevTamamla', { gorevId });
-  }
+  showConfirm('Görevi tamamlandı olarak işaretlemek istiyor musunuz?', () => nuiPost('gorevTamamla', { gorevId }));
 };
 
 // ── Yardımcı ─────────────────────────────────────────────────

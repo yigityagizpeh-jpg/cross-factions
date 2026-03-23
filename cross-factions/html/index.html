@@ -103,16 +103,19 @@
       <h2>Aktif Savaşlar</h2>
       <div id="savasListesi" class="card-grid"></div>
       <hr/>
-      <h2>Savaş İlan Et</h2>
-      <div class="form-group">
-        <label>Hedef Faction</label>
-        <select id="savasHedefFaction"><option value="">Seç...</option></select>
+      <div id="savasIlanUyarisi" class="hidden"></div>
+      <div id="savasIlanFormu">
+        <h2>Savaş İlan Et</h2>
+        <div class="form-group">
+          <label>Hedef Faction</label>
+          <select id="savasHedefFaction"><option value="">Seç...</option></select>
+        </div>
+        <div class="form-group">
+          <label>Savaş Bölgesi (Territory)</label>
+          <select id="savasTerritory"><option value="">Seç...</option></select>
+        </div>
+        <button class="btn-danger" id="savasIlanBtn">Savaş İlan Et</button>
       </div>
-      <div class="form-group">
-        <label>Savaş Bölgesi (Territory)</label>
-        <select id="savasTerritory"><option value="">Seç...</option></select>
-      </div>
-      <button class="btn-danger" id="savasIlanBtn">Savaş İlan Et</button>
     </div>
 
     <!-- ── SEZON ── -->
@@ -130,6 +133,32 @@
 
   </div><!-- /content -->
 </div><!-- /tablet -->
+
+<!-- ── Toast bildirimi ── -->
+<div id="cfToast" class="cf-toast"></div>
+
+<!-- ── Onay modalı ── -->
+<div id="cfModal" class="cf-modal-overlay hidden">
+  <div class="cf-modal">
+    <div id="cfModalMsg" class="cf-modal-msg"></div>
+    <div class="cf-modal-actions">
+      <button class="btn-danger" id="cfModalOk">Evet</button>
+      <button class="btn-secondary" id="cfModalCancel">İptal</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Girdi modalı ── -->
+<div id="cfPromptModal" class="cf-modal-overlay hidden">
+  <div class="cf-modal">
+    <div id="cfPromptMsg" class="cf-modal-msg"></div>
+    <input type="text" id="cfPromptInput" class="cf-prompt-input"/>
+    <div class="cf-modal-actions">
+      <button class="btn-primary" id="cfPromptOk">Tamam</button>
+      <button class="btn-secondary" id="cfPromptCancel">İptal</button>
+    </div>
+  </div>
+</div>
 
 <script src="js/app.js"></script>
 </body>
