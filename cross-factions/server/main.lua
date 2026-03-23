@@ -53,9 +53,33 @@ local function HerkeseSyncGonder()
         factionlar      = Factionlar,
         territoriler    = TerritoryDurum,
         aktifSavaslar   = AktifSavaslar,
+        aktifGorevler   = AktifGorevler,
         onlineOyuncular = OnlineOyunculariGetir(),
     }
     TriggerClientEvent('cross-factions:sync', -1, veri)
+end
+
+local function TabletVeriGonder(source)
+    local citizenId = CitizenIdGetir(source)
+    if not citizenId then return end
+    local fid, f = OyuncuFactioniBul(citizenId)
+    local aktifGorev = fid and AktifGorevler[fid] or nil
+    local aktifSavasListesi = {}
+    for _, s in pairs(AktifSavaslar) do
+        aktifSavasListesi[#aktifSavasListesi + 1] = s
+    end
+    local sezonlar = MySQL.query.await('SELECT * FROM cf_sezonlar ORDER BY id DESC LIMIT 5')
+    TriggerClientEvent('cross-factions:tabletVeri', source, {
+        factionlar      = Factionlar,
+        territoriler    = TerritoryDurum,
+        savaslar        = aktifSavasListesi,
+        benimFactionId  = fid,
+        benimCitizenId  = citizenId,
+        aktifGorev      = aktifGorev,
+        sezonlar        = sezonlar,
+        gorevler        = Config.Gorevler,
+        onlineOyuncular = OnlineOyunculariGetir(),
+    })
 end
 
 local function KaynakIsimGetir(source)
@@ -108,6 +132,7 @@ local function TeritorileriYukle()
             ownerFactionId  = t.owner_faction_id,
             captureProgress = t.capture_progress or 0.0,
             sonCapture      = t.son_capture,
+            factionOzel     = t.faction_ozel,
         }
     end
     Log('Territoriler yüklendi: ' .. #sonuc)
@@ -233,6 +258,7 @@ RegisterNetEvent('cross-factions:factionOlustur', function(veri)
 
     HerkeseSyncGonder()
     TriggerClientEvent('cross-factions:bildirim', source, isim .. ' faction\'ı oluşturuldu!', 'success')
+    TabletVeriGonder(source)
     Log('Faction oluşturuldu: ' .. isim .. ' (' .. citizenId .. ')')
 end)
 
@@ -256,6 +282,7 @@ RegisterNetEvent('cross-factions:factionSil', function()
     Factionlar[fid] = nil
     HerkeseSyncGonder()
     TriggerClientEvent('cross-factions:bildirim', source, 'Faction silindi.', 'success')
+    TabletVeriGonder(source)
 end)
 
 -- Üye Davet Et
@@ -408,6 +435,7 @@ RegisterNetEvent('cross-factions:factionAyril', function()
 
     HerkeseSyncGonder()
     TriggerClientEvent('cross-factions:bildirim', source, 'Faction\'dan ayrıldın.', 'success')
+    TabletVeriGonder(source)
 end)
 
 -- Yetki Ata
@@ -509,6 +537,7 @@ RegisterNetEvent('cross-factions:factionGuncelle', function(veri)
     MySQL.query.await('UPDATE cf_factions SET renk=?, logo_url=? WHERE id=?', { yeniRenk, yeniLogo, fid })
     HerkeseSyncGonder()
     TriggerClientEvent('cross-factions:bildirim', source, 'Faction güncellendi.', 'success')
+    TabletVeriGonder(source)
 end)
 
 -- ── ─────────────────────────────────────────────────────────
@@ -947,6 +976,7 @@ RegisterNetEvent('cross-factions:gorevAl', function(gorevConfigId)
 
     TriggerClientEvent('cross-factions:bildirim', source, '"' .. gorevCfg.isim .. '" görevi başladı!', 'success')
     HerkeseSyncGonder()
+    TabletVeriGonder(source)
 end)
 
 RegisterNetEvent('cross-factions:gorevTamamla', function(gorevId)
@@ -979,6 +1009,7 @@ RegisterNetEvent('cross-factions:gorevTamamla', function(gorevId)
     AktifGorevler[fid] = nil
     HerkeseSyncGonder()
     TriggerClientEvent('cross-factions:bildirim', source, '"' .. gorev.isim .. '" görevi tamamlandı! Ödül: $' .. gorev.odulPara, 'success')
+    TabletVeriGonder(source)
 end)
 
 -- Görev süresi kontrolü
@@ -1009,35 +1040,88 @@ end)
 -- ── ─────────────────────────────────────────────────────────
 
 RegisterNetEvent('cross-factions:tabletAc', function()
-    local source    = source
-    local citizenId = CitizenIdGetir(source)
-    if not citizenId then return end
-
-    local fid, f = OyuncuFactioniBul(citizenId)
-    local aktifGorev = fid and AktifGorevler[fid] or nil
-    local aktifSavasListesi = {}
-    for sid, s in pairs(AktifSavaslar) do
-        aktifSavasListesi[#aktifSavasListesi + 1] = s
-    end
-
-    local sezonlar = MySQL.query.await('SELECT * FROM cf_sezonlar ORDER BY id DESC LIMIT 5')
-
-    TriggerClientEvent('cross-factions:tabletVeri', source, {
-        factionlar      = Factionlar,
-        territoriler    = TerritoryDurum,
-        savaslar        = aktifSavasListesi,
-        benimFactionId  = fid,
-        benimCitizenId  = citizenId,
-        aktifGorev      = aktifGorev,
-        sezonlar        = sezonlar,
-        gorevler        = Config.Gorevler,
-        onlineOyuncular = OnlineOyunculariGetir(),
-    })
+    local source = source
+    TabletVeriGonder(source)
 end)
 
 -- İstemci sync talebi
 RegisterNetEvent('cross-factions:syncIste', function()
     HerkeseSyncGonder()
+end)
+
+-- ── ─────────────────────────────────────────────────────────
+--   FACTION BÖLGE YERLEŞTİRME
+-- ── ─────────────────────────────────────────────────────────
+
+-- Faction liderinin mevcut konumuna bölge koyması / güncellemesi
+RegisterNetEvent('cross-factions:territoryYerlestir', function(x, y, z)
+    local source    = source
+    local citizenId = CitizenIdGetir(source)
+    if not citizenId then return end
+
+    x = tonumber(x)
+    y = tonumber(y)
+    z = tonumber(z)
+    if not x or not y or not z then return end
+
+    -- GTA5 dünya sınırları kontrolü
+    if x < -4000.0 or x > 8000.0 or y < -4000.0 or y > 8000.0 or z < -200.0 or z > 2000.0 then
+        TriggerClientEvent('cross-factions:bildirim', source, 'Geçersiz konum!', 'error')
+        return
+    end
+
+    local fid, f, uye = OyuncuFactioniBul(citizenId)
+    if not fid or uye.yetki < 4 then
+        TriggerClientEvent('cross-factions:bildirim', source, 'Yetkin yetersiz! (Komutan veya üstü)', 'error')
+        return
+    end
+
+    -- Bu faction'ın özel bölgesi var mı?
+    local mevcutId = nil
+    for tId, t in pairs(TerritoryDurum) do
+        if t.factionOzel == fid then
+            mevcutId = tId
+            break
+        end
+    end
+
+    if mevcutId then
+        -- Mevcut bölgeyi güncelle
+        TerritoryDurum[mevcutId].x = x
+        TerritoryDurum[mevcutId].y = y
+        TerritoryDurum[mevcutId].z = z
+        MySQL.query.await('UPDATE cf_territoriler SET x=?, y=?, z=? WHERE id=?', { x, y, z, mevcutId })
+        HerkeseSyncGonder()
+        TriggerClientEvent('cross-factions:bildirim', source, f.isim .. ' bölgesi güncellendi!', 'success')
+        Log('Faction bölgesi güncellendi: ' .. fid .. ' → ' .. x .. ', ' .. y .. ', ' .. z)
+    else
+        -- Yeni bölge oluştur
+        local isim = f.isim .. ' Bölgesi'
+        local insertId = MySQL.insert.await(
+            'INSERT INTO cf_territoriler (isim, x, y, z, radius, level, faction_ozel) VALUES (?,?,?,?,?,?,?)',
+            { isim, x, y, z, 80.0, 1, fid }
+        )
+        if not insertId then
+            TriggerClientEvent('cross-factions:bildirim', source, 'Bölge oluşturulurken hata!', 'error')
+            return
+        end
+        TerritoryDurum[insertId] = {
+            id              = insertId,
+            isim            = isim,
+            x               = x,
+            y               = y,
+            z               = z,
+            radius          = 80.0,
+            level           = 1,
+            ownerFactionId  = nil,
+            captureProgress = 0.0,
+            sonCapture      = nil,
+            factionOzel     = fid,
+        }
+        HerkeseSyncGonder()
+        TriggerClientEvent('cross-factions:bildirim', source, f.isim .. ' bölgesi yerleştirildi!', 'success')
+        Log('Faction bölgesi oluşturuldu: ' .. fid .. ' at ' .. x .. ', ' .. y .. ', ' .. z)
+    end
 end)
 
 -- ── Maaş ödeme (örn. her saat) ────────────────────────────────

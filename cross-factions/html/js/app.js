@@ -44,6 +44,11 @@ window.addEventListener('message', (ev) => {
       veri.territoriler   = data.veri.territoriler  || veri.territoriler;
       veri.aktifSavaslar  = data.veri.aktifSavaslar || veri.aktifSavaslar;
       onlineOyuncular     = data.veri.onlineOyuncular || onlineOyuncular;
+      if (data.veri.aktifGorevler !== undefined) {
+        veri.aktifGorev = benimFactionId
+          ? (data.veri.aktifGorevler[benimFactionId] || null)
+          : null;
+      }
       render();
       break;
     case 'savasGuncelle':
@@ -247,7 +252,15 @@ function renderBenimFaction() {
 
   const factionlar = veri.factionlar || {};
   const f = factionlar[benimFactionId];
-  if (!f) return;
+  if (!f) {
+    // Faction artık mevcut değil; oluşturma formuna dön
+    benimFactionId = null;
+    yeniForm.classList.remove('hidden');
+    fPanel.classList.add('hidden');
+    renkSeciciOlustur('renkSecici', 'seciliRenk', RENK_LISTESI[0]);
+    bindFactionOlustur();
+    return;
+  }
 
   const benimYetki = getBenimYetki(f);
 
@@ -408,14 +421,27 @@ window.maasGuncelle = function(citizenId, mevcutMaas) {
 function renderTerritoriler() {
   const el = document.getElementById('territoryListesi');
   if (!el) return;
+
+  const benimF     = benimFactionId && (veri.factionlar || {})[benimFactionId];
+  const benimYetki = benimF ? getBenimYetki(benimF) : 0;
+
+  let leaderCtrlHtml = '';
+  if (benimYetki >= 4) {
+    const benimOzel = Object.values(veri.territoriler || {}).find(t => String(t.factionOzel) === String(benimFactionId));
+    const btnLabel  = benimOzel ? '📍 Bölge Konumunu Güncelle' : '📍 Bölge Koy';
+    leaderCtrlHtml  = `<div style="margin-bottom:12px">
+      <button class="btn-primary" id="territoryYerlestirBtn">${btnLabel}</button>
+      ${benimOzel ? `<span style="font-size:11px;color:#7a8fa6;margin-left:8px">Mevcut: ${escHtml(benimOzel.isim)}</span>` : ''}
+    </div>`;
+  }
+
   const territoriler = veri.territoriler || {};
   const factionlar   = veri.factionlar   || {};
   const keys = Object.keys(territoriler);
   if (keys.length === 0) {
-    el.innerHTML = '<p style="color:#7a8fa6;font-size:13px;">Bölge yok.</p>';
-    return;
-  }
-  el.innerHTML = keys.map(tId => {
+    el.innerHTML = leaderCtrlHtml + '<p style="color:#7a8fa6;font-size:13px;">Bölge yok.</p>';
+  } else {
+    el.innerHTML = leaderCtrlHtml + keys.map(tId => {
     const t = territoriler[tId];
     const owner = t.ownerFactionId && factionlar[t.ownerFactionId];
     const ownerText = owner ? `<span style="color:${escHtml(owner.renk)}">${escHtml(owner.isim)}</span>` : '<span style="color:#555">Sahipsiz</span>';
@@ -442,6 +468,13 @@ function renderTerritoriler() {
         <div class="card-actions">${captureBtn}</div>
       </div>`;
   }).join('');
+  }
+
+  // Bölge koy butonunu bağla
+  const yerlestirBtn = document.getElementById('territoryYerlestirBtn');
+  if (yerlestirBtn) {
+    yerlestirBtn.onclick = () => nuiPost('territoryYerlestirMod');
+  }
 }
 
 window.captureBaslat = function(tId) {

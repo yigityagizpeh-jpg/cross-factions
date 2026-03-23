@@ -193,7 +193,19 @@ CreateThread(function()
 
         -- AFK ise savaştan çıkar
         if AFKKontrol.afk then
-            QBCore.Functions.Notify('AFK olduğunuz için savaştan sayılmıyorsunuz!', 'error', 5000)
+            -- Sadece aktif savaş varken uyar
+            local savasVar = false
+            if BenimFactionId then
+                for _, s in pairs(SyncVeri.aktifSavaslar or {}) do
+                    if s.saldiranId == BenimFactionId or s.savunucuId == BenimFactionId then
+                        savasVar = true
+                        break
+                    end
+                end
+            end
+            if savasVar then
+                QBCore.Functions.Notify('AFK olduğunuz için savaştan sayılmıyorsunuz!', 'error', 5000)
+            end
         end
     end
 end)
@@ -304,6 +316,62 @@ RegisterNUICallback('syncIste', function(_, cb)
     cb('ok')
 end)
 
+-- ── Territory yerleştirme modu ────────────────────────────────
+local YerlestirmeModu = false
+
+RegisterNUICallback('territoryYerlestirMod', function(_, cb)
+    TabletAcik = false
+    SetNuiFocus(false, false)
+    SendNUIMessage({ type = 'tablet', durum = 'kapat' })
+    YerlestirmeModu = true
+    cb('ok')
+
+    CreateThread(function()
+        QBCore.Functions.Notify(
+            'Bölgeyi yerleştirmek istediğiniz konuma gidin ve ~g~E~s~ tuşuna basın. ~r~ESC~s~ ile iptal.',
+            'primary', 8000
+        )
+        while YerlestirmeModu do
+            Wait(0)
+            local ped    = PlayerPedId()
+            local coords = GetEntityCoords(ped)
+
+            -- Alan göstergesi (80m yarıçap)
+            DrawMarker(
+                1,
+                coords.x, coords.y, coords.z - 0.98,
+                0.0, 0.0, 0.0,
+                0.0, 0.0, 0.0,
+                80.0, 80.0, 0.5,
+                255, 165, 0, 80,
+                false, true, 2, false, nil, nil, false
+            )
+
+            -- Ekran yönlendirme metni
+            SetTextFont(4)
+            SetTextProportional(1)
+            SetTextScale(0.0, 0.4)
+            SetTextColour(255, 165, 0, 255)
+            SetTextOutline()
+            BeginTextCommandDisplayText('STRING')
+            AddTextComponentSubstringPlayerName('~INPUT_CONTEXT~ Bölgeyi Buraya Koy  |  ESC: İptal')
+            EndTextCommandDisplayText(0.5, 0.91)
+
+            if IsControlJustReleased(0, 38) then   -- E tuşu
+                YerlestirmeModu = false
+                TriggerServerEvent('cross-factions:territoryYerlestir', coords.x, coords.y, coords.z)
+                return
+            end
+
+            if IsControlJustReleased(0, 200) then  -- ESC
+                YerlestirmeModu = false
+                QBCore.Functions.Notify('Bölge yerleştirme iptal edildi.', 'error', 3000)
+                return
+            end
+        end
+    end)
+end)
+
 -- ── ESC tuşu tablet kapatsın ─────────────────────────────────
 CreateThread(function()
     while true do
@@ -363,7 +431,7 @@ CreateThread(function()
                 EndTextCommandDisplayText(0.5, 0.91)
 
                 -- E tuşu (38) ile tablet aç
-                if IsControlJustReleased(0, 38) then
+                if not YerlestirmeModu and IsControlJustReleased(0, 38) then
                     if not TabletAcik then
                         TabletAcik = true
                         SetNuiFocus(true, true)
