@@ -34,7 +34,7 @@ CREATE TABLE IF NOT EXISTS `cf_faction_uyeler` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS `cf_territoriler` (
-    `id`               INT          NOT NULL,
+    `id`               INT          NOT NULL AUTO_INCREMENT,
     `isim`             VARCHAR(100) NOT NULL,
     `x`                FLOAT        NOT NULL,
     `y`                FLOAT        NOT NULL,
@@ -44,8 +44,10 @@ CREATE TABLE IF NOT EXISTS `cf_territoriler` (
     `level`            INT          NOT NULL DEFAULT 1,
     `capture_progress` FLOAT        NOT NULL DEFAULT 0.0,
     `son_capture`      TIMESTAMP    DEFAULT NULL,
+    `faction_ozel`     INT          DEFAULT NULL,
     PRIMARY KEY (`id`),
-    FOREIGN KEY (`owner_faction_id`) REFERENCES `cf_factions`(`id`) ON DELETE SET NULL
+    FOREIGN KEY (`owner_faction_id`) REFERENCES `cf_factions`(`id`) ON DELETE SET NULL,
+    FOREIGN KEY (`faction_ozel`) REFERENCES `cf_factions`(`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS `cf_savaslar` (
